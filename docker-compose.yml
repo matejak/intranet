@@ -1,0 +1,249 @@
+version: '2.2'
+
+services:
+  collabora:
+    image: collabora/code
+    environment:
+     - domain=$COLLABORA_DOMAIN_REGEX
+     - username=$ADMIN_USERNAME
+     - password=$ADMIN_PASSWORD
+     # - DONT_GEN_SSL_CERT=dont
+     - server_name=collabora.$DOMAINNAME
+    cap_add:
+     - MKNOD 
+    networks:
+      - collabora-frontend
+
+
+  db-next:
+    image: postgres:alpine
+    restart: always
+    volumes:
+      - ./data/next/db:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_PASSWORD=$NEXT_POSTGRES_PASSWORD
+      # Nextcloud requires that it creates the DB during installation
+      - POSTGRES_DB=foobarrr
+      - POSTGRES_USER=$NEXT_POSTGRES_USER
+    networks:
+      next-backend:
+        aliases:
+          - db
+
+  # Needs to install apps
+  # docker-compose exec -u www-data next ./occ app:install groupfolders
+  next-base:
+    image: nextcloud:apache
+    volumes:
+      - ./data/next/data:/var/www/html
+    environment:
+      - POSTGRES_PASSWORD=$NEXT_POSTGRES_PASSWORD
+      - POSTGRES_DB=$NEXT_POSTGRES_DB
+      - POSTGRES_USER=$NEXT_POSTGRES_USER
+      - POSTGRES_HOST=db
+
+      - NEXTCLOUD_ADMIN_USER=$ADMIN_USERNAME
+      - NEXTCLOUD_ADMIN_PASSWORD=$ADMIN_PASSWORD
+      - NEXTCLOUD_TRUSTED_DOMAINS=$NEXT_HOSTNAME.$DOMAINNAME
+    networks:
+      - next-frontend
+      - next-backend
+      - ldap-backend
+      - keycloak-frontend
+
+  next:
+    extends: next-base
+    ports:
+      - 8080:80
+    depends_on:
+      - db-next
+      - openldap
+      - keycloak
+
+  gateway:
+    image: nginx:stable
+    ports:
+      - 80:80
+      - 443:443
+    depends_on:
+      - phpldapadmin
+      - rocketchat
+      - collabora
+      - next
+      - keycloak
+      - teap
+    volumes:
+      - ./config/nginx.conf:/etc/nginx/nginx.conf:ro
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+    networks:
+      - ldap-frontend
+      - next-frontend
+      - rocket-frontend
+      - collabora-frontend
+      - keycloak-frontend
+      - teap-frontend
+
+  mongo-rocket:
+    image: mongo:4
+    volumes:
+      - ./data/rocket/mongo:/data/db
+    command: mongod --smallfiles --oplogSize 128 --replSet rs0 --storageEngine=mmapv1
+    labels:
+      - "traefik.enable=false"
+    networks:
+      rocket-backend:
+        aliases:
+          - db
+
+  next-init:
+    extends: next-base
+    command: 'bash -c "for app in groupfolders; do php occ app:install $$app; php occ app:enable $$app; done'
+
+  mongo-init-replica:
+    image: mongo:4.0
+    command: 'bash -c "for i in `seq 1 30`; do mongo db/rocketchat --eval \"rs.initiate({ _id: ''rs0'', members: [ { _id: 0, host: ''localhost:27017'' } ]})\" && s=$$? && break || s=$$?; echo \"Tried $$i times. Waiting 5 secs...\"; sleep 5; done; (exit $$s)"'
+    depends_on:
+      - mongo-rocket
+    networks:
+      - rocket-backend
+
+  rocketchat:
+    image: rocket.chat
+    volumes:
+      - ./data/rocket/uploads:/app/uploads
+    environment:
+      - ROOT_URL=https://rocket.$DOMAINNAME
+      - MONGO_URL=mongodb://db:27017/rocketchat
+      - MONGO_OPLOG_URL=mongodb://db:27017/local
+
+      - PORT=3000
+
+      - ADMIN_USERNAME=$ADMIN_USERNAME
+      - ADMIN_PASS=$ADMIN_PASSWORD
+    command: bash -c 'for i in `seq 1 30`; do node main.js && s=$$? && break || s=$$?; echo "Tried $$i times. Waiting 5 secs..."; sleep 5; done; (exit $$s)'
+    depends_on:
+      - mongo-rocket
+      - openldap
+      - keycloak
+    networks:
+      - ldap-backend
+      - rocket-backend
+      - rocket-frontend
+      - keycloak-frontend
+    labels:
+      - "traefik.backend=rocketchat"
+      - "traefik.frontend.rule=Host: rocket.entint.org"
+
+  openldap:
+    image: cspii/openldap
+    build:
+      context: build/openldap
+    environment:
+      LDAP_TLS: 'false'
+      LDAP_ORGANISATION: "The Enterprisey Intranet"
+      LDAP_DOMAIN: "$DOMAINNAME"
+      LDAP_BASE_DN: "$LDAP_BASE_DN"
+      LDAP_ADMIN_PASSWORD: "$ADMIN_PASSWORD"
+    volumes:
+      - ./data/ldap/data:/var/lib/ldap
+      - ./data/ldap/slapd.d:/etc/ldap/slapd.d
+    ports:
+      - "389:389"
+    networks:
+      ldap-backend:
+        aliases:
+          - ldap
+
+  phpldapadmin:
+    image: osixia/phpldapadmin
+    environment:
+      PHPLDAPADMIN_LDAP_HOSTS: "openldap"
+      PHPLDAPADMIN_HTTPS=false:
+    depends_on:
+      - openldap
+    networks:
+      - ldap-backend
+      - ldap-frontend
+
+  db-keycloak:
+    image: postgres:alpine
+    volumes:
+      - ./data/keycloak/db:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_PASSWORD=$KEYCLOAK_POSTGRES_PASSWORD
+      - POSTGRES_DB=$KEYCLOAK_POSTGRES_DB
+      - POSTGRES_USER=$KEYCLOAK_POSTGRES_USER
+    networks:
+      keycloak-backend:
+        aliases:
+          - db
+
+  keycloak:
+    image: jboss/keycloak
+    ports:
+      - 8180:8080
+    environment:
+      - DB_VENDOR=postgres
+      - DB_ADDR=db
+      - DB_USER=$KEYCLOAK_POSTGRES_USER
+      - DB_PASSWORD=$KEYCLOAK_POSTGRES_PASSWORD
+
+      - PROXY_ADDRESS_FORWARDING=true
+      # - KEYCLOAK_HOSTNAME=sso.$DOMAINNAME
+      - KEYCLOAK_HOSTNAME=localhost
+
+      - KEYCLOAK_USER=$ADMIN_USERNAME 
+      - KEYCLOAK_PASSWORD=$ADMIN_PASSWORD
+
+      - KEYCLOAK_HTTPS_PORT=443
+      # - KEYCLOAK_HTTP_PORT=80
+      - KEYCLOAK_HTTP_PORT=8180
+    depends_on:
+      - db-keycloak
+      - openldap
+    networks:
+      - ldap-backend
+      - keycloak-frontend
+      - keycloak-backend
+
+  teap:
+    image: entint/teap
+    build: 
+      context: build/teap
+    volumes:
+      - ./config/ldap.ini:/app/ldap.ini:ro
+    environment:
+      - FLASK_ENV=debug
+      - DATABASE_URL=$TEAP_DATABASE_URL
+      - SECRET_KEY=$TEAP_SECRET_KEY
+
+      - NEXTCLOUD_HOST=$TEAP_NEXTCLOUD_HOST
+      - NEXTCLOUD_USER=$ADMIN_USERNAME
+      - NEXTCLOUD_PASSWORD=$ADMIN_PASSWORD
+
+      - ROCKETCHAT_HOST=$TEAP_ROCKETCHAT_HOST
+      - ROCKETCHAT_USER=$ADMIN_USERNAME
+      - ROCKETCHAT_PASSWORD=$ADMIN_PASSWORD
+
+      - EDAP_HOSTNAME=ldap.entint.org
+      - EDAP_USER=cn=$ADMIN_USERNAME
+      - EDAP_PASSWORD=$ADMIN_PASSWORD
+      - EDAP_DOMAIN=$DOMAINNAME
+
+      - PREFERRED_URL_SCHEME=https
+      - OAUTHLIB_RELAX_TOKEN_SCOPE=true
+    networks:
+      - teap-frontend
+
+# Custom network so all services can communicate using a FQDN
+networks:
+  next-backend:
+  next-frontend:
+  rocket-backend:
+  rocket-frontend:
+  ldap-backend:
+  ldap-frontend:
+  collabora-frontend:
+  keycloak-backend:
+  keycloak-frontend:
+  teap-frontend:

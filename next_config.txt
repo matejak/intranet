@@ -1,0 +1,126 @@
+ldap:
+	lastJpegPhotoLookup           
+	ldapAgentName                 
+	ldapAgentPassword             
+	ldapAttributesForGroupSearch  
+	ldapBase                      
+	ldapBaseGroups                
+	ldapBaseUsers                 
+	ldapCacheTTL                  
+	ldapConfigurationActive       
+	ldapEmailAttribute            
+	ldapExperiencedAdmin          
+	ldapExpertUsernameAttr        
+	ldapGidNumber                 
+	ldapGroupDisplayName          
+	ldapGroupFilter               
+	ldapGroupFilterMode           
+	ldapGroupFilterObjectclass    
+	ldapGroupMemberAssocAttr      
+	ldapHost                      
+	ldapLoginFilter               
+	ldapLoginFilterEmail          
+	ldapLoginFilterMode           
+	ldapLoginFilterUsername       
+	ldapNestedGroups              
+	ldapPagingSize                
+	ldapPort                      
+	ldapTLS                       
+	ldapUserAvatarRule            
+	ldapUserDisplayName           
+	ldapUserFilter                
+	ldapUserFilterMode            
+	ldapUserFilterObjectclass     
+	ldapUuidGroupAttribute        
+	ldapUuidUserAttribute         
+	turnOffCertCheck              
+	turnOnPasswordChange          
+	useMemberOfToDetectMembership
+
+user_ldap:	
+ldap_user_filter_mode
+ldap_userfilter_groups
+ldap_login_filter_mode 
+ldap_loginfilter_email
+ldap_host                    
+ldap_backup_host       
+ldap_backup_port     
+ldap_override_main_server      
+ldap_loginfilter_username
+ldap_loginfilter_attributes
+ldap_groupfilter_objectclass
+ldap_groupfilter_groups  
+ldap_gid_number                  
+ldap_tls                        
+ldap_quota_def 
+ldap_dn
+ldap_port
+ldap_base
+ldap_userlist_filter
+ldap_login_filter
+ldap_group_filter_mode
+ldap_group_filter
+ldap_base_users
+ldap_base_groups
+ldap_group_display_name
+ldap_user_display_name_2
+ldap_quota_attr
+ldap_cache_ttl
+home_folder_naming_rule
+ldap_turn_off_cert_check
+ldap_attributes_for_user_search
+ldap_expert_uuid_user_attr
+ldap_expert_uuid_group_attr
+use_memberof_to_detect_membership
+last_jpegPhoto_lookup
+ldap_nested_groups
+ldap_paging_size
+ldap_turn_on_pwd_change
+ldap_experienced_admin
+ldap_dynamic_group_member_url
+ldap_default_ppolicy_dn
+ldap_user_avatar_rule
+ldap_ext_storage_home_attribute
+ldap_agent_password
+ldap_userfilter_objectclass
+has_memberof_filter_support
+ldap_configuration_active
+ldap_group_member_assoc_attribute
+ldap_attributes_for_group_search
+ldap_email_attr
+ldap_expert_username_attr
+ldap_display_name
+
+user_saml:
+	general-uid_mapping
+	idp-entityId
+	idp-singleSignOnService.url
+	type
+	general-idp0_display_name
+	general-allow_multiple_user_back_ends
+	installed_version
+	sp-privateKey
+	saml-attribute-mapping-email_mapping
+	idp-singleLogoutService.url
+	security-authnRequestsSigned
+	security-logoutRequestSigned
+	security-logoutResponseSigned
+	security-wantMessagesSigned
+	security-wantAssertionsSigned
+	saml-attribute-mapping-displayName_mapping
+	idp-x509cert
+	general-require_provisioned_account
+	sp-x509cert
+
+richdocuments:
+	wopi_url
+
+
+
+app:enable user_ldap
+config:app:get user_ldap s01ldap_dn
+config:app:set --value <val> user_ldap s01ldap_dn
+
+sudo docker-compose exec --user www-data next php occ maintenance:mode --on
+
+
