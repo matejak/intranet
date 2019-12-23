@@ -1,3 +1,5 @@
+#!/bin/bash
+
 DOMAINNAME='entint.org'
 ADMIN_PASSWORD='admin'
 ADMIN_USER='admin'
@@ -14,7 +16,18 @@ test -n "$MAIL_SUBDOMAIN" && MAIL_HOST="$MAIL_SUBDOMAIN.$MAIL_HOST"
 # yes if we are testing things locally, i.e. without a real domain
 LOCAL_SETUP=yes
 
-readarray -d . -t DOMAIN_COMPONENTS <<< "$DOMAINNAME"
+
+function define_domain_components {
+	local IFS='.'
+	DOMAIN_COMPONENTS=()
+	for dc in $DOMAINNAME; do
+		DOMAIN_COMPONENTS+=("$dc")
+	done
+}
+
+define_domain_components
+# Requires Bash 4.4 or something.
+# readarray -d . -t DOMAIN_COMPONENTS <<< "$DOMAINNAME"
 LDAP_BASE_DN=
 for dc in "${DOMAIN_COMPONENTS[@]}"; do
 	LDAP_BASE_DN="${LDAP_BASE_DN}dc=$dc,"
@@ -105,6 +118,80 @@ MAIL_CONFIGURATION["smtpSslMode"]="tls"
 MAIL_CONFIGURATION["smtpUser"]="%USERID%@$DOMAINNAME"
 
 
+declare -A MONGO_LDAP
+MONGO_LDAP[Authentication]='true'
+MONGO_LDAP[Authentication_Password]="\"$ADMIN_PASSWORD\""
+MONGO_LDAP[Authentication_UserDN]="\"cn=$ADMIN_USER,$LDAP_BASE_DN\""
+MONGO_LDAP[Background_Sync]='true'
+MONGO_LDAP[Background_Sync_Import_New_Users]='true'
+MONGO_LDAP[Background_Sync_Interval]='"Every 2 hours"'
+MONGO_LDAP[Background_Sync_Keep_Existant_Users_Updated]='true'
+MONGO_LDAP[BaseDN]="\"ou=people,$LDAP_BASE_DN\""
+MONGO_LDAP[CA_Cert]='""'
+MONGO_LDAP[Connect_Timeout]='1000'
+MONGO_LDAP[Default_Domain]="\"$DOMAIN\""
+MONGO_LDAP[Enable]='true'
+MONGO_LDAP[Encryption]='"plain"'
+MONGO_LDAP[Find_User_After_Login]='true'
+MONGO_LDAP[Group_Filter_Enable]='false'
+MONGO_LDAP[Group_Filter_Group_Id_Attribute]='"cn"'
+MONGO_LDAP[Group_Filter_Group_Member_Attribute]='"uniqueMember"'
+MONGO_LDAP[Group_Filter_Group_Member_Format]='"uniqueMember"'
+MONGO_LDAP[Group_Filter_Group_Name]='"ROCKET_CHAT"'
+MONGO_LDAP[Group_Filter_ObjectClass]='"posixGroup"'
+MONGO_LDAP[Host]='"ldap"'
+MONGO_LDAP[Host]='"ldap.entint.org"'
+MONGO_LDAP[Idle_Timeout]='1000'
+MONGO_LDAP[Internal_Log_Level]='"disabled"'
+MONGO_LDAP[Login_Fallback]='true'
+MONGO_LDAP[Merge_Existing_Users]='true'
+MONGO_LDAP[Port]='"389"'
+MONGO_LDAP[Reconnect]='true'
+MONGO_LDAP[Reject_Unauthorized]='true'
+MONGO_LDAP[Search_Page_Size]='250'
+MONGO_LDAP[Search_Size_Limit]='5000'
+# MONGO_LDAP[Sync_Now]='"ldap_sync_now"'
+MONGO_LDAP[Sync_User_Avatar]='true'
+MONGO_LDAP[Sync_User_Data]='true'
+MONGO_LDAP[Sync_User_Data_FieldMap]='"{\"cn\":\"name\", \"mail\":\"email\"}"'
+MONGO_LDAP[Sync_User_Data_Groups]='true'
+MONGO_LDAP[Sync_User_Data_GroupsMap]='"{\n\t\"it\": \"it\"\n\t,\"admins\": \"admin\"\n}"'
+MONGO_LDAP[Sync_User_Data_Groups_AutoChannels]='false'
+MONGO_LDAP[Sync_User_Data_Groups_AutoChannelsMap]='"{\n\t\"it\": \"it\", \"everybody\": \"general\"\n}"'
+MONGO_LDAP[Sync_User_Data_Groups_AutoChannels_Admin]='"rocket.cat"'
+MONGO_LDAP[Sync_User_Data_Groups_AutoRemove]='false'
+MONGO_LDAP[Sync_User_Data_Groups_BaseDN]='""'
+MONGO_LDAP[Sync_User_Data_Groups_Enforce_AutoChannels]='false'
+MONGO_LDAP[Sync_User_Data_Groups_Filter]='"(&(cn=#{groupName})(memberUid=#{username}))"'
+# MONGO_LDAP[Test_Connection]='"ldap_test_connection"'
+MONGO_LDAP[Timeout]='600'
+MONGO_LDAP[Unique_Identifier_Field]='"uid"'
+MONGO_LDAP[User_Search_Field]='"uid"'
+MONGO_LDAP[User_Search_Filter]='"(objectclass=inetOrgPerson)"'
+MONGO_LDAP[User_Search_Scope]='"sub"'
+MONGO_LDAP[Username_Field]='"uid"'
+
+
+declare -A MONGO_SAML
+MONGO_SAML[Custom_Default]='true'
+MONGO_SAML[Custom_Default_button_color]='"#1d74f5"'
+MONGO_SAML[Custom_Default_button_label_color]='"#FFFFFF"'
+MONGO_SAML[Custom_Default_button_label_text]='"SAML login"'
+MONGO_SAML[Custom_Default_debug]='true'
+MONGO_SAML[Custom_Default_entry_point]="\"https://sso.$DOMAIN/auth/realms/master/protocol/saml\""
+MONGO_SAML[Custom_Default_generate_username]='false'
+MONGO_SAML[Custom_Default_idp_slo_redirect_url]="\"https://sso.$DOMAIN/auth/realms/master/protocol/saml\""
+MONGO_SAML[Custom_Default_issuer]="\"https://$ROCKETCHAT_HOSTNAME.$DOMAINNAME/_saml/metadata/keycloak"\"
+MONGO_SAML[Custom_Default_logout_behaviour]='"SAML"'
+MONGO_SAML[Custom_Default_mail_overwrite]='false'
+MONGO_SAML[Custom_Default_name_overwrite]='false'
+MONGO_SAML[Custom_Default_provider]='"keycloak"'
+# Probably the IP's key
+MONGO_SAML[Custom_Default_cert]=''
+MONGO_SAML[Custom_Default_private_key]=''
+MONGO_SAML[Custom_Default_public_cert]=''
+
+
 function nextcloud_exec {
 	docker-compose exec --user www-data next php occ --no-ansi "$@"
 }
@@ -151,12 +238,13 @@ function configure_nextcloud {
 }
 
 
-function configure_ldap {
+function configure_nextcloud_ldap {
 	if ldap_has_config; then
 		c_id=$(ldap_config_id)
 	else
 		out=$(nextcloud_exec 'ldap:create-empty-config')
-		c_id=$(sed -e 's/.*configID\s*//' <<< "$out")
+		c_id=$(ldap_config_id)
+		# c_id=$(sed -e 's/.*configID\s*//' <<< "$out")
 	fi
 
 	for item in "${!LDAP_CONFIGURATION[@]}"; do
@@ -165,7 +253,7 @@ function configure_ldap {
 }
 
 
-function configure_saml_except_certs {
+function configure_nextcloud_saml_except_certs {
 	for item in "${!SAML_CONFIGURATION[@]}"; do
 		grep -q 'x509cert' <<< $item && continue
 		grep -q 'privateKey' <<< $item && continue
@@ -174,18 +262,19 @@ function configure_saml_except_certs {
 }
 
 
+# $1: Hostname
 function _keycloak_client_id {
-	printf "%s" "$(keycloak_exec get clients -q "clientId=https://$NEXTCLOUD_HOSTNAME.$DOMAINNAME/apps/user_saml/saml/metadata" -F id | jq -M --raw-output '.[0].id')"
+	keycloak_exec config credentials --server http://localhost:8080/auth --realm master --user "$ADMIN_USER" --password $ADMIN_PASSWORD &> /dev/null
+	printf "%s" "$(keycloak_exec get clients -q "clientId=https://$1.$DOMAINNAME/apps/user_saml/saml/metadata" -F id | jq -M --raw-output '.[0].id')"
 }
 
 
 function configure_keycloak {
 	keycloak_exec config credentials --server http://localhost:8080/auth --realm master --user "$ADMIN_USER" --password $ADMIN_PASSWORD
-	client_id=$(_keycloak_client_id)
+	client_id=$(_keycloak_client_id $NEXTCLOUD_HOSTNAME)
 	if test "$client_id" = null; then
 		echo 'ERRORRE!'
 	fi
-        keycloak_exec update "clients/$client_id" -s 'attributes."saml.signing.certificate"=haha'
 	# TODO: Create the Nextcloud client by downloading its SAML metadata and supplying it to the API
 	# TODO: get the mappings, set mappings and uniqueness and whatever.
 }
@@ -195,20 +284,88 @@ function configure_saml_certs {
 	tmp_dir=$(mktemp -d -t certs-XXXXXX)
 	sp_cert="$tmp_dir/myservice.key"
 	sp_key="$tmp_dir/myservice.cert"
-	idp_cert="$tmp_dir/myidp.cert"
 	openssl req -x509 -sha256 -nodes -days 3650 -newkey rsa:2048 -batch -keyout "$sp_cert" -out "$sp_key"
-	client_id=$(_keycloak_client_id)
-        keycloak_exec update "clients/$client_id" -s 'attributes."saml.signing.certificate"='"$(cat "$sp_cert" | head -n -1 | tail -n +2)"
+
+	# SP - KEYCLOAK PART
+	keycloak_exec config credentials --server http://localhost:8080/auth --realm master --user "$ADMIN_USER" --password $ADMIN_PASSWORD
+	# SP - NEXTCLOUD PART
+	client_id=$(_keycloak_client_id "$NEXTCLOUD_HOSTNAME")
+	keycloak_exec update "clients/$client_id" -s 'attributes."saml.signing.certificate"='"$(cat "$sp_cert" | head -n -1 | tail -n +2)"
 	nextcloud_exec "config:app:set" --value="$(cat "$sp_cert")" user_saml "sp-x509cert"
 	nextcloud_exec "config:app:set" --value="$(cat "$sp_key")" user_saml "sp-privateKey"
+
+	# SP - ROCKET PART
+	client_id=$(_keycloak_client_id "$ROCKETCHAT_HOSTNAME")
+	keycloak_exec update "clients/$client_id" -s 'attributes."saml.signing.certificate"='"$(cat "$sp_cert" | head -n -1 | tail -n +2)"
+	mongo_rocket_eval_update rocketchat_settings SAML_Custom_Default_public_cert "\"$(cat "$sp_cert")\""
+	mongo_rocket_eval_update rocketchat_settings SAML_Custom_Default_private_key "\"$(cat "$sp_key")\""
+
+	# cleanup
 	rm -f "$sp_cert" "$sp_key"
+
+	# IdP - KEYCLOAK PART
+	idp_cert="$tmp_dir/myidp.cert"
 	printf '%s\n' '-----BEGIN CERTIFICATE-----' > "$idp_cert"
-	keycloak_realm_cert=$(keycloak_exec get realms/master/keys -F 'keys(publicKey)' | jq -M --raw-output 'flatten|add.publicKey')
+	# keycloak_realm_cert=$(keycloak_exec get realms/master/keys -F 'keys(publicKey)' | jq -M --raw-output 'flatten|add.publicKey')
+	keycloak_realm_cert=$(keycloak_exec get realms/master/keys -F 'keys(certificate)' | jq -M --raw-output 'flatten|add.certificate')
 	printf '%s\n' "$keycloak_realm_cert" >> "$idp_cert"
 	printf '%s\n' '-----END CERTIFICATE-----' >> "$idp_cert"
+
+	# IdP - NEXTCLOUD PART
 	nextcloud_exec "config:app:set" --value="$(cat "$idp_cert")" user_saml "idp-x509cert"
+
+	# IdP - ROCKET PART
+	mongo_rocket_eval_update rocketchat_settings SAML_Custom_Default_cert "\"$keycloak_realm_cert\""
+
+	# cleanup
 	rm -f "$idp_cert"
 	rm -rf "$tmp_dir"
+}
+
+
+function mongo_rocket {
+	docker-compose exec mongo-rocket "$@"
+}
+
+
+function mongo_rocket_eval {
+	mongo_rocket mongo 'db/rocketchat' --eval "$1"
+}
+
+
+# $1: DB
+# $2: id
+# $3: value
+function mongo_rocket_eval_update {
+	mongo_rocket_eval "db.$1.update({\"_id\": \"$2\"}, {\
+	       \$currentDate: { \"_updatedAt\": true},\
+	       \$set: { \"value\": $3}\
+	})"
+}
+
+
+function configure_rocketchat {
+	# Init the mongo db
+	for i in $(seq 1 30); do
+		mongo_rocket_eval "rs.initiate({ _id: 'rs0', members: [ { _id: 0, host: 'localhost:27017' } ]})" && break || echo "Tried $i times. Waiting 5 secs..."
+		sleep 5
+	done
+}
+
+
+function configure_rocketchat_ldap {
+	for item in "${!MONGO_LDAP[@]}"; do
+		mongo_rocket_eval_update rocketchat_settings "LDAP_$item" "${MONGO_LDAP[$item]}"
+	done
+}
+
+
+function configure_rocketchat_saml_except_certs {
+	for item in "${!MONGO_SAML[@]}"; do
+		grep -q 'cert' <<< $item && continue
+		grep -q 'private_key' <<< $item && continue
+		mongo_rocket_eval_update rocketchat_settings "SAML_$item" "${MONGO_SAML[$item]}"
+	done
 }
 
 
@@ -227,8 +384,16 @@ function create_nginx_conf {
 	substitute_env_vars_in_file "config/nginx.conf"
 }
 
+
+function configure_teap {
+	docker-compose exec -e FLASK_APP=backend/app.py teap flask bootstrap
+	docker-compose exec -e FLASK_APP=backend/app.py teap flask db upgrade
+}
+
+
 # configure_nextcloud
-# configure_ldap
-# configure_saml_except_certs
+# configure_nextcloud_ldap
+# configure_nextcloud_saml_except_certs
 # configure_keycloak
 # configure_saml_certs
+# configure_rocketchat

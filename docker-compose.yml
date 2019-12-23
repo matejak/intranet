@@ -32,7 +32,7 @@ services:
 
   # Needs to install apps
   # docker-compose exec -u www-data next ./occ app:install groupfolders
-  next-base:
+  next:
     image: nextcloud:apache
     volumes:
       - ./data/next/data:/var/www/html
@@ -45,20 +45,15 @@ services:
       - NEXTCLOUD_ADMIN_USER=$ADMIN_USERNAME
       - NEXTCLOUD_ADMIN_PASSWORD=$ADMIN_PASSWORD
       - NEXTCLOUD_TRUSTED_DOMAINS=$NEXT_HOSTNAME.$DOMAINNAME
+    depends_on:
+      - db-next
+      - openldap
+      - keycloak
     networks:
       - next-frontend
       - next-backend
       - ldap-backend
       - keycloak-frontend
-
-  next:
-    extends: next-base
-    ports:
-      - 8080:80
-    depends_on:
-      - db-next
-      - openldap
-      - keycloak
 
   gateway:
     image: nginx:stable
@@ -87,7 +82,7 @@ services:
     image: mongo:4
     volumes:
       - ./data/rocket/mongo:/data/db
-    command: mongod --smallfiles --oplogSize 128 --replSet rs0 --storageEngine=mmapv1
+    command: mongod --oplogSize 128 --replSet rs0 --storageEngine=wiredTiger
     labels:
       - "traefik.enable=false"
     networks:
@@ -95,22 +90,12 @@ services:
         aliases:
           - db
 
-  next-init:
-    extends: next-base
-    command: 'bash -c "for app in groupfolders; do php occ app:install $$app; php occ app:enable $$app; done'
-
-  mongo-init-replica:
-    image: mongo:4.0
-    command: 'bash -c "for i in `seq 1 30`; do mongo db/rocketchat --eval \"rs.initiate({ _id: ''rs0'', members: [ { _id: 0, host: ''localhost:27017'' } ]})\" && s=$$? && break || s=$$?; echo \"Tried $$i times. Waiting 5 secs...\"; sleep 5; done; (exit $$s)"'
-    depends_on:
-      - mongo-rocket
-    networks:
-      - rocket-backend
-
   rocketchat:
     image: rocket.chat
     volumes:
       - ./data/rocket/uploads:/app/uploads
+    # ports:
+    # - "8080:3000"
     environment:
       - ROOT_URL=https://rocket.$DOMAINNAME
       - MONGO_URL=mongodb://db:27017/rocketchat
@@ -120,6 +105,8 @@ services:
 
       - ADMIN_USERNAME=$ADMIN_USERNAME
       - ADMIN_PASS=$ADMIN_PASSWORD
+      - Accounts_UseDNSDomainCheck=false
+      - OVERWRITE_SETTING_Show_Setup_Wizard=completed
     command: bash -c 'for i in `seq 1 30`; do node main.js && s=$$? && break || s=$$?; echo "Tried $$i times. Waiting 5 secs..."; sleep 5; done; (exit $$s)'
     depends_on:
       - mongo-rocket
@@ -180,8 +167,8 @@ services:
 
   keycloak:
     image: jboss/keycloak
-    ports:
-      - 8180:8080
+    # ports:
+    # - 8180:8080
     environment:
       - DB_VENDOR=postgres
       - DB_ADDR=db
