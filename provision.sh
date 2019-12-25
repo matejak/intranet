@@ -1,20 +1,20 @@
 #!/bin/bash
 
-DOMAINNAME='entint.org'
-ADMIN_PASSWORD='admin'
+DOMAINNAME="${DOMAINNAME:-entint.org}"
+ADMIN_PASSWORD="${ADMIN_PASSWORD:-admin}"
 ADMIN_USER='admin'
 
 SSO_HOSTNAME='sso'
-NEXTCLOUD_HOSTNAME='next'
-ROCKETCHAT_HOSTNAME='rocket'
-COLLABORA_HOSTNAME='collabora'
+NEXTCLOUD_HOSTNAME="${NEXTCLOUD_HOSTNAME:-next}"
+ROCKETCHAT_HOSTNAME="${ROCKETCHAT_HOSTNAME:-rocket}"
+COLLABORA_HOSTNAME="${COLLABORA_HOSTNAME:-collabora}"
 MAIL_SUBDOMAIN=mail
 
 MAIL_HOST=$DOMAINNAME
 test -n "$MAIL_SUBDOMAIN" && MAIL_HOST="$MAIL_SUBDOMAIN.$MAIL_HOST"
 
 # yes if we are testing things locally, i.e. without a real domain
-LOCAL_SETUP=yes
+LOCAL_SETUP="${LOCAL_SETUP:-yes}"
 
 
 function define_domain_components {
@@ -24,6 +24,12 @@ function define_domain_components {
 		DOMAIN_COMPONENTS+=("$dc")
 	done
 }
+
+
+function escape_newlines {
+	awk '{printf "%s\\n", $0}' <<< "$1" | sed -e 's/\\n$//'  # Remove the trailing '\n'
+}
+
 
 define_domain_components
 # Requires Bash 4.4 or something.
@@ -129,7 +135,7 @@ MONGO_LDAP[Background_Sync_Keep_Existant_Users_Updated]='true'
 MONGO_LDAP[BaseDN]="\"ou=people,$LDAP_BASE_DN\""
 MONGO_LDAP[CA_Cert]='""'
 MONGO_LDAP[Connect_Timeout]='1000'
-MONGO_LDAP[Default_Domain]="\"$DOMAIN\""
+MONGO_LDAP[Default_Domain]="\"$DOMAINNAME\""
 MONGO_LDAP[Enable]='true'
 MONGO_LDAP[Encryption]='"plain"'
 MONGO_LDAP[Find_User_After_Login]='true'
@@ -140,7 +146,6 @@ MONGO_LDAP[Group_Filter_Group_Member_Format]='"uniqueMember"'
 MONGO_LDAP[Group_Filter_Group_Name]='"ROCKET_CHAT"'
 MONGO_LDAP[Group_Filter_ObjectClass]='"posixGroup"'
 MONGO_LDAP[Host]='"ldap"'
-MONGO_LDAP[Host]='"ldap.entint.org"'
 MONGO_LDAP[Idle_Timeout]='1000'
 MONGO_LDAP[Internal_Log_Level]='"disabled"'
 MONGO_LDAP[Login_Fallback]='true'
@@ -178,9 +183,9 @@ MONGO_SAML[Custom_Default_button_color]='"#1d74f5"'
 MONGO_SAML[Custom_Default_button_label_color]='"#FFFFFF"'
 MONGO_SAML[Custom_Default_button_label_text]='"SAML login"'
 MONGO_SAML[Custom_Default_debug]='true'
-MONGO_SAML[Custom_Default_entry_point]="\"https://sso.$DOMAIN/auth/realms/master/protocol/saml\""
+MONGO_SAML[Custom_Default_entry_point]="\"https://sso.$DOMAINNAME/auth/realms/master/protocol/saml\""
 MONGO_SAML[Custom_Default_generate_username]='false'
-MONGO_SAML[Custom_Default_idp_slo_redirect_url]="\"https://sso.$DOMAIN/auth/realms/master/protocol/saml\""
+MONGO_SAML[Custom_Default_idp_slo_redirect_url]="\"https://sso.$DOMAINNAME/auth/realms/master/protocol/saml\""
 MONGO_SAML[Custom_Default_issuer]="\"https://$ROCKETCHAT_HOSTNAME.$DOMAINNAME/_saml/metadata/keycloak"\"
 MONGO_SAML[Custom_Default_logout_behaviour]='"SAML"'
 MONGO_SAML[Custom_Default_mail_overwrite]='false'
@@ -262,15 +267,15 @@ function configure_nextcloud_saml_except_certs {
 }
 
 
-# $1: Hostname
+# $1: Literal Client ID URL
 function _keycloak_client_id {
-	keycloak_exec config credentials --server http://localhost:8080/auth --realm master --user "$ADMIN_USER" --password $ADMIN_PASSWORD &> /dev/null
-	printf "%s" "$(keycloak_exec get clients -q "clientId=https://$1.$DOMAINNAME/apps/user_saml/saml/metadata" -F id | jq -M --raw-output '.[0].id')"
+	keycloak_exec config credentials --server http://localhost:8080/auth --realm master --user "$ADMIN_USER" --password "$ADMIN_PASSWORD" &> /dev/null
+	printf "%s" "$(keycloak_exec get clients -q "clientId=$1" -F id | jq -M --raw-output '.[0].id')"
 }
 
 
 function configure_keycloak {
-	keycloak_exec config credentials --server http://localhost:8080/auth --realm master --user "$ADMIN_USER" --password $ADMIN_PASSWORD
+	keycloak_exec config credentials --server http://localhost:8080/auth --realm master --user "$ADMIN_USER" --password "$ADMIN_PASSWORD"
 	client_id=$(_keycloak_client_id $NEXTCLOUD_HOSTNAME)
 	if test "$client_id" = null; then
 		echo 'ERRORRE!'
@@ -282,23 +287,23 @@ function configure_keycloak {
 
 function configure_saml_certs {
 	tmp_dir=$(mktemp -d -t certs-XXXXXX)
-	sp_cert="$tmp_dir/myservice.key"
-	sp_key="$tmp_dir/myservice.cert"
-	openssl req -x509 -sha256 -nodes -days 3650 -newkey rsa:2048 -batch -keyout "$sp_cert" -out "$sp_key"
+	sp_cert="$tmp_dir/myservice.cert"
+	sp_key="$tmp_dir/myservice.key"
+	openssl req -x509 -sha256 -nodes -days 3650 -newkey rsa:2048 -batch -keyout "$sp_key" -out "$sp_cert"
 
 	# SP - KEYCLOAK PART
-	keycloak_exec config credentials --server http://localhost:8080/auth --realm master --user "$ADMIN_USER" --password $ADMIN_PASSWORD
+	keycloak_exec config credentials --server http://localhost:8080/auth --realm master --user "$ADMIN_USER" --password "$ADMIN_PASSWORD"
 	# SP - NEXTCLOUD PART
-	client_id=$(_keycloak_client_id "$NEXTCLOUD_HOSTNAME")
+	client_id=$(_keycloak_client_id "https://$NEXTCLOUD_HOSTNAME.$DOMAINNAME/apps/user_saml/saml/metadata")
 	keycloak_exec update "clients/$client_id" -s 'attributes."saml.signing.certificate"='"$(cat "$sp_cert" | head -n -1 | tail -n +2)"
 	nextcloud_exec "config:app:set" --value="$(cat "$sp_cert")" user_saml "sp-x509cert"
 	nextcloud_exec "config:app:set" --value="$(cat "$sp_key")" user_saml "sp-privateKey"
 
 	# SP - ROCKET PART
-	client_id=$(_keycloak_client_id "$ROCKETCHAT_HOSTNAME")
+	client_id=$(_keycloak_client_id "https://$ROCKETCHAT_HOSTNAME.$DOMAINNAME/_saml/metadata/keycloak")
 	keycloak_exec update "clients/$client_id" -s 'attributes."saml.signing.certificate"='"$(cat "$sp_cert" | head -n -1 | tail -n +2)"
-	mongo_rocket_eval_update rocketchat_settings SAML_Custom_Default_public_cert "\"$(cat "$sp_cert")\""
-	mongo_rocket_eval_update rocketchat_settings SAML_Custom_Default_private_key "\"$(cat "$sp_key")\""
+	mongo_rocket_eval_update rocketchat_settings SAML_Custom_Default_public_cert "\"$(escape_newlines "$(cat "$sp_cert")")\""
+	mongo_rocket_eval_update rocketchat_settings SAML_Custom_Default_private_key "\"$(escape_newlines "$(cat "$sp_key")")\""
 
 	# cleanup
 	rm -f "$sp_cert" "$sp_key"
@@ -315,7 +320,8 @@ function configure_saml_certs {
 	nextcloud_exec "config:app:set" --value="$(cat "$idp_cert")" user_saml "idp-x509cert"
 
 	# IdP - ROCKET PART
-	mongo_rocket_eval_update rocketchat_settings SAML_Custom_Default_cert "\"$keycloak_realm_cert\""
+	# mongo_rocket_eval_update rocketchat_settings SAML_Custom_Default_cert "\"$keycloak_realm_cert\""
+	mongo_rocket_eval_update rocketchat_settings SAML_Custom_Default_cert "\"$(escape_newlines "$keycloak_realm_cert")\""
 
 	# cleanup
 	rm -f "$idp_cert"
