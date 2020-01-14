@@ -112,6 +112,13 @@ OFFICE_CONFIGURATION["wopi_url"]="https://$COLLABORA_HOSTNAME.$DOMAINNAME"
 OFFICE_CONFIGURATION["public_wopi_url"]="${OFFICE_CONFIGURATION[wopi_url]}"
 
 
+declare -A CALENDAR_CONFIGURATION
+CALENDAR_CONFIGURATION["sendEventRemindersPush"]="yes"
+CALENDAR_CONFIGURATION["generateBirthdayCalendar"]="no"
+CALENDAR_CONFIGURATION["sendInvitations"]="yes"
+CALENDAR_CONFIGURATION["sendEventReminders"]="yes"
+
+
 declare -A MAIL_CONFIGURATION
 MAIL_CONFIGURATION["email"]="%USERID%@$MAIL_HOST"
 MAIL_CONFIGURATION["imapHost"]="$MAIL_HOST"
@@ -234,8 +241,15 @@ function configure_office {
 }
 
 
+function configure_calendar {
+	for item in "${!CALENDAR_CONFIGURATION[@]}"; do
+		nextcloud_exec "config:app:set" --value "${CALENDAR_CONFIGURATION[$item]}" dav "$item"
+	done
+}
+
+
 function configure_nextcloud {
-	apps_enable groupfolders user_ldap user_saml richdocuments mail
+	apps_enable groupfolders user_ldap user_saml richdocuments mail calendar
 	test "$LOCAL_SETUP" = yes || nextcloud_exec "config:system:set" --value "https" "overwriteprotocol"
 	for item in "${!MAIL_CONFIGURATION[@]}"; do
 		nextcloud_exec "config:system:set" --value "${MAIL_CONFIGURATION[$item]}" app.mail.accounts.default "$item"

@@ -14,7 +14,6 @@ services:
     networks:
       - collabora-frontend
 
-
   db-next:
     image: postgres:alpine
     restart: always
@@ -79,7 +78,7 @@ services:
       - teap-frontend
 
   mongo-rocket:
-    image: mongo:4
+    image: mongo:4.0
     volumes:
       - ./data/rocket/mongo:/data/db
     command: mongod --oplogSize 128 --replSet rs0 --storageEngine=wiredTiger
