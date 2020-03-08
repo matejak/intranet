@@ -7,6 +7,7 @@ ADMIN_USER='admin'
 SSO_HOSTNAME='sso'
 NEXTCLOUD_HOSTNAME="${NEXTCLOUD_HOSTNAME:-next}"
 ROCKETCHAT_HOSTNAME="${ROCKETCHAT_HOSTNAME:-rocket}"
+TEAP_HOSTNAME="${TEAP_HOSTNAME:-teap}"
 COLLABORA_HOSTNAME="${COLLABORA_HOSTNAME:-collabora}"
 MAIL_SUBDOMAIN=mail
 
@@ -319,6 +320,15 @@ function configure_saml_certs {
 	mongo_rocket_eval_update rocketchat_settings SAML_Custom_Default_public_cert "\"$(escape_newlines "$(cat "$sp_cert")")\""
 	mongo_rocket_eval_update rocketchat_settings SAML_Custom_Default_private_key "\"$(escape_newlines "$(cat "$sp_key")")\""
 
+	# SP - TEAP PART
+	# Be sure to disable assertions encryption and document signing.
+	# Otherwise, the Python SAML client is confused by too many keys.
+	# Related: https://github.com/XML-Security/signxml/issues/143
+	client_id=$(_keycloak_client_id "https://$TEAP_HOSTNAME.$DOMAINNAME/saml/metadata.xml")
+	test -n "$client_id" && keycloak_exec update "clients/$client_id" -s 'attributes."saml.signing.certificate"='"$(cat "$sp_cert" | head -n -1 | tail -n +2)"
+	teap_flask saml sp-cert -- "$(cat "$sp_cert")"
+	teap_flask saml sp-key -- "$(cat "$sp_key")"
+
 	# cleanup
 	rm -f "$sp_cert" "$sp_key"
 
@@ -336,6 +346,9 @@ function configure_saml_certs {
 	# IdP - ROCKET PART
 	# mongo_rocket_eval_update rocketchat_settings SAML_Custom_Default_cert "\"$keycloak_realm_cert\""
 	mongo_rocket_eval_update rocketchat_settings SAML_Custom_Default_cert "\"$(escape_newlines "$keycloak_realm_cert")\""
+
+	# IdP - TEAP PART
+	teap_flask saml idp-cert -- "$(cat "$idp_cert")"
 
 	# cleanup
 	rm -f "$idp_cert"
@@ -405,9 +418,14 @@ function create_nginx_conf {
 }
 
 
+function teap_flask {
+	docker-compose exec -e FLASK_APP=backend/app.py teap flask "$@"
+}
+
+
 function configure_teap {
-	docker-compose exec -e FLASK_APP=backend/app.py teap flask bootstrap
-	docker-compose exec -e FLASK_APP=backend/app.py teap flask db upgrade
+	teap_flask db upgrade
+	teap_flask bootstrap
 }
 
 

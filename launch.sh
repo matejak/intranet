@@ -1,5 +1,6 @@
 #!/bin/bash
 
+INTRANET_REPO=https://github.com/EnterpriseyIntranet/intranet.git
 
 set -ex
 docker-compose up -d db-next
@@ -10,7 +11,8 @@ sleep 15 &
 . "$(dirname "${BASH_SOURCE[0]}")/provision.sh"
 configure_rocketchat
 
-(cd build/teap && git fetch origin && git checkout master && git pull)
+(file -d build/teap || cd build && git clone "$INTRANET_REPO")
+(cd build/teap && git fetch origin && git pull)
 docker-compose build teap
 wait
 

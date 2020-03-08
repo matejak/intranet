@@ -198,8 +198,16 @@ services:
       context: build/teap
     volumes:
       - ./config/ldap.ini:/app/ldap.ini:ro
+      - ./data/certs/tmp:/tmp
     environment:
-      - FLASK_ENV=debug
+      - AUTHORIZATION=yes
+      - SERVER_NAME=teap.$DOMAINNAME
+      # - PREFERRED_URL_SCHEME=https
+
+      - FLASK_APP=backend/app.py
+      # - FLASK_ENV=development
+      - FLASK_ENV=production
+
       - DATABASE_URL=$TEAP_DATABASE_URL
       - SECRET_KEY=$TEAP_SECRET_KEY
 
@@ -216,7 +224,6 @@ services:
       - EDAP_PASSWORD=$ADMIN_PASSWORD
       - EDAP_DOMAIN=$DOMAINNAME
 
-      - PREFERRED_URL_SCHEME=https
       - OAUTHLIB_RELAX_TOKEN_SCOPE=true
     networks:
       - teap-frontend
