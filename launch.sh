@@ -11,7 +11,7 @@ sleep 15 &
 . "$(dirname "${BASH_SOURCE[0]}")/provision.sh"
 configure_rocketchat
 
-(file -d build/teap || { cd build && git clone "$INTRANET_REPO"; } )
+(test -d build/teap || { cd build && git clone "$INTRANET_REPO"; } )
 (cd build/teap && git fetch origin && git pull)
 docker-compose build teap
 wait

@@ -120,17 +120,60 @@ CALENDAR_CONFIGURATION["sendInvitations"]="yes"
 CALENDAR_CONFIGURATION["sendEventReminders"]="yes"
 
 
-declare -A MAIL_CONFIGURATION
-MAIL_CONFIGURATION["email"]="%USERID%@$MAIL_HOST"
-MAIL_CONFIGURATION["imapHost"]="$MAIL_HOST"
-MAIL_CONFIGURATION["imapPort"]=143
-MAIL_CONFIGURATION["imapSslMode"]="tls"
-MAIL_CONFIGURATION["imapUser"]="%USERID%@$DOMAINNAME"
-MAIL_CONFIGURATION["smtpHost"]="$MAIL_HOST"
-MAIL_CONFIGURATION["smtpPort"]=587
-MAIL_CONFIGURATION["smtpSslMode"]="tls"
-MAIL_CONFIGURATION["smtpUser"]="%USERID%@$DOMAINNAME"
+declare -A MAIL_DEFAULTS
+MAIL_DEFAULTS["email"]="%USERID%@$MAIL_HOST"
+MAIL_DEFAULTS["imapHost"]="$MAIL_HOST"
+MAIL_DEFAULTS["imapPort"]=143
+MAIL_DEFAULTS["imapSslMode"]="tls"
+MAIL_DEFAULTS["imapUser"]="%USERID%@$DOMAINNAME"
+MAIL_DEFAULTS["smtpHost"]="$MAIL_HOST"
+MAIL_DEFAULTS["smtpPort"]=587
+MAIL_DEFAULTS["smtpSslMode"]="tls"
+MAIL_DEFAULTS["smtpUser"]="%USERID%@$DOMAINNAME"
 
+
+declare -A MAIL_INT_CONFIGURATION
+MAIL_INT_CONFIGURATION["imap.timeout"]="20"
+MAIL_INT_CONFIGURATION["smtp.timeout"]="4"
+
+
+declare -A DIVISIONS
+DIVISIONS['edu']='Education'
+DIVISIONS['fin']='Finance'
+DIVISIONS['hra']='HR-and-Admin'
+DIVISIONS['it']='IT'
+DIVISIONS['leg']='Legal'
+DIVISIONS['lgc']='Legacy'
+DIVISIONS['mar']='Marketing'
+DIVISIONS['pub']='Publishing'
+DIVISIONS['res']='Research'
+DIVISIONS['tra']='Translations'
+
+
+DIVISIONS_CHANNEL_MAP=""
+for code in "${!DIVISIONS[@]}"; do
+	value="${DIVISIONS[$code]}"
+	DIVISIONS_CHANNEL_MAP="${DIVISIONS_CHANNEL_MAP}\\t\\\"${code}\\\": \\\"Division-${value}\\\",\\n"
+done
+
+declare -A DIVISIONS
+DIVISIONS['edu']='Education'
+DIVISIONS['fin']='Finance'
+DIVISIONS['hra']='HR-and-Admin'
+DIVISIONS['it']='IT'
+DIVISIONS['leg']='Legal'
+DIVISIONS['lgc']='Legacy'
+DIVISIONS['mar']='Marketing'
+DIVISIONS['pub']='Publishing'
+DIVISIONS['res']='Research'
+DIVISIONS['tra']='Translations'
+
+
+DIVISIONS_CHANNEL_MAP=""
+for code in "${!DIVISIONS[@]}"; do
+	value="${DIVISIONS[$code]}"
+	DIVISIONS_CHANNEL_MAP="${DIVISIONS_CHANNEL_MAP}\\t\\\"${code}\\\": \\\"Division-${value}\\\",\\n"
+done
 
 declare -A MONGO_LDAP
 MONGO_LDAP[Authentication]='true'
@@ -156,7 +199,7 @@ MONGO_LDAP[Group_Filter_ObjectClass]='"posixGroup"'
 MONGO_LDAP[Host]='"ldap"'
 MONGO_LDAP[Idle_Timeout]='1000'
 MONGO_LDAP[Internal_Log_Level]='"disabled"'
-MONGO_LDAP[Login_Fallback]='false'
+MONGO_LDAP[Login_Fallback]='true'
 MONGO_LDAP[Merge_Existing_Users]='true'
 MONGO_LDAP[Port]='"389"'
 MONGO_LDAP[Reconnect]='true'
@@ -169,11 +212,11 @@ MONGO_LDAP[Sync_User_Data]='true'
 MONGO_LDAP[Sync_User_Data_FieldMap]='"{\"cn\":\"name\", \"mail\":\"email\"}"'
 MONGO_LDAP[Sync_User_Data_Groups]='true'
 MONGO_LDAP[Sync_User_Data_GroupsMap]='"{\n\t\"it\": \"it\"\n\t,\"admins\": \"admin\"\n}"'
-MONGO_LDAP[Sync_User_Data_Groups_AutoChannels]='false'
-MONGO_LDAP[Sync_User_Data_Groups_AutoChannelsMap]='"{\n\t\"it\": \"it\", \"everybody\": \"general\"\n}"'
+MONGO_LDAP[Sync_User_Data_Groups_AutoChannels]='true'
+MONGO_LDAP[Sync_User_Data_Groups_AutoChannelsMap]="\"{\\n${DIVISIONS_CHANNEL_MAP}\\t\\\"everybody\\\": \\\"general\\\"\\n}\""
 MONGO_LDAP[Sync_User_Data_Groups_AutoChannels_Admin]='"rocket.cat"'
 MONGO_LDAP[Sync_User_Data_Groups_AutoRemove]='false'
-MONGO_LDAP[Sync_User_Data_Groups_BaseDN]='""'
+MONGO_LDAP[Sync_User_Data_Groups_BaseDN]='"ou=divisions,dc=cspii,dc=org"'
 MONGO_LDAP[Sync_User_Data_Groups_Enforce_AutoChannels]='false'
 MONGO_LDAP[Sync_User_Data_Groups_Filter]='"(&(cn=#{groupName})(memberUid=#{username}))"'
 # MONGO_LDAP[Test_Connection]='"ldap_test_connection"'
@@ -206,7 +249,7 @@ MONGO_SAML[Custom_Default_public_cert]=''
 
 
 function nextcloud_exec {
-	docker-compose exec --user www-data next php occ --no-ansi "$@"
+	docker-compose exec --user www-data "$NEXTCLOUD_HOSTNAME" php occ --no-ansi "$@"
 }
 
 
@@ -250,10 +293,13 @@ function configure_calendar {
 
 
 function configure_nextcloud {
-	apps_enable groupfolders user_ldap user_saml richdocuments mail calendar
+	apps_enable groupfolders user_ldap user_saml richdocuments mail calendar deck
 	test "$LOCAL_SETUP" = yes || nextcloud_exec "config:system:set" --value "https" "overwriteprotocol"
-	for item in "${!MAIL_CONFIGURATION[@]}"; do
-		nextcloud_exec "config:system:set" --value "${MAIL_CONFIGURATION[$item]}" app.mail.accounts.default "$item"
+	for item in "${!MAIL_DEFAULTS[@]}"; do
+		nextcloud_exec "config:system:set" --value "${MAIL_DEFAULTS[$item]}" app.mail.accounts.default "$item"
+	done
+	for item in "${!MAIL_INT_CONFIGURATION[@]}"; do
+		nextcloud_exec "config:system:set" mail --value "${MAIL_INT_CONFIGURATION[$item]}" --type int "$item"
 	done
 }
 
@@ -357,7 +403,7 @@ function configure_saml_certs {
 
 
 function mongo_rocket {
-	docker-compose exec mongo-rocket "$@"
+	docker-compose exec mongo-"$ROCKETCHAT_HOSTNAME" "$@"
 }
 
 
