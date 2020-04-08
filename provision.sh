@@ -14,6 +14,9 @@ MAIL_SUBDOMAIN=mail
 MAIL_HOST=$DOMAINNAME
 test -n "$MAIL_SUBDOMAIN" && MAIL_HOST="$MAIL_SUBDOMAIN.$MAIL_HOST"
 
+IMAP_HOSTNAME=imap.$MAIL_HOST
+SMTP_HOSTNAME=$IMAP_HOSTNAME
+
 # yes if we are testing things locally, i.e. without a real domain
 LOCAL_SETUP="${LOCAL_SETUP:-yes}"
 
@@ -458,9 +461,11 @@ function substitute_env_vars_in_file {
 }
 
 
-function create_nginx_conf {
+function create_nginx_files {
 	cp config/nginx.conf.in config/nginx.conf
 	substitute_env_vars_in_file "config/nginx.conf"
+	cp 'data/gateway/config-v1.1.xml.in' 'data/gateway/config-v1.1.xml'
+	substitute_env_vars_in_file 'data/gateway/config-v1.1.xml'
 }
 
 

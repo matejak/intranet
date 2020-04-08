@@ -11,6 +11,25 @@ server_names_hash_bucket_size 64;
 
   server { # simple reverse-proxy
     listen       80;
+    server_name  @MAIL_DOMAINNAME@;
+
+    return 301 https://@MAIL_DOMAINNAME@$request_uri;
+  }
+
+  server {
+    listen       443 ssl;
+    server_name  @MAIL_DOMAINNAME@;
+
+    ssl_certificate /etc/letsencrypt/live/@DOMAINNAME@/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/@DOMAINNAME@/privkey.pem;
+
+    location /autoconfig/mail/ {
+       root /www/media/mail_autoconfig/;
+    }
+  }
+
+  server { # simple reverse-proxy
+    listen       80;
     server_name  @DOMAINNAME@;
 
     return 301 https://www.@DOMAINNAME@$request_uri;
