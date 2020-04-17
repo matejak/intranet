@@ -15,7 +15,7 @@ MAIL_HOST=$DOMAINNAME
 test -n "$MAIL_SUBDOMAIN" && MAIL_HOST="$MAIL_SUBDOMAIN.$MAIL_HOST"
 
 IMAP_HOSTNAME=imap.$MAIL_HOST
-SMTP_HOSTNAME=$IMAP_HOSTNAME
+SMTP_HOSTNAME=$MAIL_HOST
 
 # yes if we are testing things locally, i.e. without a real domain
 LOCAL_SETUP="${LOCAL_SETUP:-yes}"
@@ -136,8 +136,9 @@ MAIL_DEFAULTS["smtpUser"]="%USERID%@$DOMAINNAME"
 
 
 declare -A MAIL_INT_CONFIGURATION
-MAIL_INT_CONFIGURATION["imap.timeout"]="20"
-MAIL_INT_CONFIGURATION["smtp.timeout"]="4"
+MAIL_INT_CONFIGURATION["imap.timeout"]=20
+MAIL_INT_CONFIGURATION["smtp.timeout"]=6
+MAIL_INT_CONFIGURATION["verify-tls-peer"]=0
 
 
 declare -A DIVISIONS
@@ -147,11 +148,11 @@ DIVISIONS['hra']='HR-and-Admin'
 DIVISIONS['it']='IT'
 DIVISIONS['leg']='Legal'
 DIVISIONS['lgc']='Legacy'
+DIVISIONS['lng']='Languages'
 DIVISIONS['mar']='Marketing'
 DIVISIONS['pub']='Publishing'
 DIVISIONS['res']='Research'
 DIVISIONS['tra']='Translations'
-
 
 DIVISIONS_CHANNEL_MAP=""
 for code in "${!DIVISIONS[@]}"; do
@@ -159,24 +160,6 @@ for code in "${!DIVISIONS[@]}"; do
 	DIVISIONS_CHANNEL_MAP="${DIVISIONS_CHANNEL_MAP}\\t\\\"${code}\\\": \\\"Division-${value}\\\",\\n"
 done
 
-declare -A DIVISIONS
-DIVISIONS['edu']='Education'
-DIVISIONS['fin']='Finance'
-DIVISIONS['hra']='HR-and-Admin'
-DIVISIONS['it']='IT'
-DIVISIONS['leg']='Legal'
-DIVISIONS['lgc']='Legacy'
-DIVISIONS['mar']='Marketing'
-DIVISIONS['pub']='Publishing'
-DIVISIONS['res']='Research'
-DIVISIONS['tra']='Translations'
-
-
-DIVISIONS_CHANNEL_MAP=""
-for code in "${!DIVISIONS[@]}"; do
-	value="${DIVISIONS[$code]}"
-	DIVISIONS_CHANNEL_MAP="${DIVISIONS_CHANNEL_MAP}\\t\\\"${code}\\\": \\\"Division-${value}\\\",\\n"
-done
 
 declare -A MONGO_LDAP
 MONGO_LDAP[Authentication]='true'
