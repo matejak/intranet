@@ -35,6 +35,41 @@ function escape_newlines {
 }
 
 
+# $1: ou name
+# $2: cn of groups under that ou
+# $3: what to query
+function ldap_query_ou {
+	docker-compose exec openldap bash -c "ldapsearch -b \"ou=$1,\$LDAP_BASE_DN\" -x -w \"\$LDAP_ADMIN_PASSWORD\" -D \"cn=admin,\$LDAP_BASE_DN\" \"(cn=$2)\" \"$3\""
+}
+
+
+# $1: Arguments to doveadm as one single string
+function doveadm_exec {
+	docker-compose exec mail bash -c "doveadm $1"
+}
+
+
+# $1: Shared from
+# $2: Shared to
+# $3: permissions as string
+function doveadm_acl_add {
+	doveadm_exec "acl add -u \"$1@\$DOMAIN\" 'Inbox' \"user=$2@\$DOMAIN\" $3"
+}
+
+
+# $1: ou name
+# $2: cn of groups under that ou
+function dovecot_share_inbox {
+	readarray -t members < <(ldap_query_ou "$1" "$2" "memberUid" | grep "^memberUid" | cut -f 2 -d ' ')
+	mail=$(ldap_query_ou "$1" "$2" "mail" | grep "^mail" | cut -f 2 -d ' ')
+	group_username=$(cut -f 1 -d @ <<< "$mail")
+	for member in "${members[@]}"; do
+		echo "Sharing box of $group_username to $member"
+		doveadm_acl_add "$group_username" "$member" "lookup read write write-seen write-deleted insert post expunge"
+	done
+}
+
+
 define_domain_components
 # Requires Bash 4.4 or something.
 # readarray -d . -t DOMAIN_COMPONENTS <<< "$DOMAINNAME"
@@ -233,6 +268,9 @@ MONGO_SAML[Custom_Default_cert]=''
 MONGO_SAML[Custom_Default_private_key]=''
 MONGO_SAML[Custom_Default_public_cert]=''
 
+# TODO: MONGO_ACCOUNTS
+# Don't allow changes of whatever to accounts
+# Don't allow registrations
 
 function nextcloud_exec {
 	docker-compose exec --user www-data "$NEXTCLOUD_HOSTNAME" php occ --no-ansi "$@"
@@ -285,7 +323,7 @@ function configure_nextcloud {
 		nextcloud_exec "config:system:set" --value "${MAIL_DEFAULTS[$item]}" app.mail.accounts.default "$item"
 	done
 	for item in "${!MAIL_INT_CONFIGURATION[@]}"; do
-		nextcloud_exec "config:system:set" mail --value "${MAIL_INT_CONFIGURATION[$item]}" --type int "$item"
+		nextcloud_exec "config:system:set" app.mail --value "${MAIL_INT_CONFIGURATION[$item]}" --type int "$item"
 	done
 }
 
