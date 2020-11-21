@@ -35,11 +35,45 @@ function escape_newlines {
 }
 
 
+# $1: filter
+# $2: output field
+# $3: search base restriction (optional, without the comma if specified)
+# We use bash statement to let the container do the env var substitution
+function ldap_query {
+	local search_base_restriction output_field filter
+	filter="$1"
+	output_field="$2"
+	test -n "$3" && search_base_restriction="$3,"
+	docker-compose exec openldap bash -c "ldapsearch -b \"${search_base_restriction}\$LDAP_BASE_DN\" -x -w \"\$LDAP_ADMIN_PASSWORD\" -D \"cn=admin,\$LDAP_BASE_DN\" \"$filter\" \"$output_field\""
+}
+
+
+# $1: filter
+# $2: output field
+# $3: output array name
+# $4: search base restriction (optional, without the comma if specified)
+function ldap_extract {
+	readarray -t "$3" < <(ldap_query "$1" "$2" "$4" | grep "^$2" | cut -f 1 -d ' ' --complement)
+}
+
+
 # $1: ou name
 # $2: cn of groups under that ou
 # $3: what to query
+# We use bash statement to let the container do the env var substitution
 function ldap_query_ou {
 	docker-compose exec openldap bash -c "ldapsearch -b \"ou=$1,\$LDAP_BASE_DN\" -x -w \"\$LDAP_ADMIN_PASSWORD\" -D \"cn=admin,\$LDAP_BASE_DN\" \"(cn=$2)\" \"$3\""
+}
+
+
+# $1: before
+# $2: after
+function change_mail_domain {
+	ldap_extract "(mail=*@$1)" dn dns
+	ldap_extract "(mail=*@$1)" mail mails
+	for idx in "${!dns[@]}"; do
+		change_mail_of_dn "${dns[$idx]}" "$(cut -f 1 -d @ <<< "${mails[$idx]}")" "$2"
+	done
 }
 
 
