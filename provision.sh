@@ -15,10 +15,16 @@ MAIL_HOST=$DOMAINNAME
 test -n "$MAIL_SUBDOMAIN" && MAIL_HOST="$MAIL_SUBDOMAIN.$MAIL_HOST"
 
 IMAP_HOSTNAME=imap.$MAIL_HOST
-SMTP_HOSTNAME=$MAIL_HOST
+SMTP_HOSTNAME=smtp.$MAIL_HOST
 
 # yes if we are testing things locally, i.e. without a real domain
 LOCAL_SETUP="${LOCAL_SETUP:-yes}"
+
+
+# $1: db host stem
+function db_admin {
+	docker-compose exec "db-$1" bash -c 'psql -U "$POSTGRES_USER" "$POSTGRES_DB"'
+}
 
 
 function define_domain_components {
@@ -91,15 +97,46 @@ function doveadm_acl_add {
 }
 
 
-# $1: ou name
-# $2: cn of groups under that ou
+# $1: Shared from
+# $2: Shared to
+# $3: permissions as string
+function doveadm_acl_add_all {
+	doveadm_acl_add "$1" "$2" "lookup read write write-seen write-deleted insert post expunge"
+}
+
+
+function dovecot_share_all_inboxes {
+	dovecot_share_inboxes ddea
+	dovecot_share_inboxes cdea
+	dovecot_share_inboxes special
+}
+
+
+function strip_string {
+	grep -oP '^[\w\._-]*' <<< "$1"
+}
+
+
+# $1: ou name - e.g. ddea
+function dovecot_share_inboxes {
+	cns=()
+	ldap_extract '(objectClass=*)' cn cns "ou=$1"
+	for cn in "${cns[@]}"; do
+		dovecot_share_inbox "$1" "$(strip_string "$cn")"
+	done
+}
+
+
+# $1: ou name - e.g. ddea
+# $2: cn of groups under that ou - e.g. it
 function dovecot_share_inbox {
+	echo "$1 $2"
 	readarray -t members < <(ldap_query_ou "$1" "$2" "memberUid" | grep "^memberUid" | cut -f 2 -d ' ')
 	mail=$(ldap_query_ou "$1" "$2" "mail" | grep "^mail" | cut -f 2 -d ' ')
 	group_username=$(cut -f 1 -d @ <<< "$mail")
 	for member in "${members[@]}"; do
 		echo "Sharing box of $group_username to $member"
-		doveadm_acl_add "$group_username" "$member" "lookup read write write-seen write-deleted insert post expunge"
+		doveadm_acl_add "$group_username" "$(strip_string "$member")" "lookup read write write-seen write-deleted insert post expunge"
 	done
 }
 
@@ -194,11 +231,11 @@ CALENDAR_CONFIGURATION["sendEventReminders"]="yes"
 
 declare -A MAIL_DEFAULTS
 MAIL_DEFAULTS["email"]="%USERID%@$MAIL_HOST"
-MAIL_DEFAULTS["imapHost"]="$MAIL_HOST"
+MAIL_DEFAULTS["imapHost"]="$IMAP_HOSTNAME"
 MAIL_DEFAULTS["imapPort"]=143
 MAIL_DEFAULTS["imapSslMode"]="tls"
 MAIL_DEFAULTS["imapUser"]="%USERID%@$DOMAINNAME"
-MAIL_DEFAULTS["smtpHost"]="$MAIL_HOST"
+MAIL_DEFAULTS["smtpHost"]="$SMTP_HOSTNAME"
 MAIL_DEFAULTS["smtpPort"]=587
 MAIL_DEFAULTS["smtpSslMode"]="tls"
 MAIL_DEFAULTS["smtpUser"]="%USERID%@$DOMAINNAME"
@@ -217,11 +254,10 @@ DIVISIONS['hra']='HR-and-Admin'
 DIVISIONS['it']='IT'
 DIVISIONS['leg']='Legal'
 DIVISIONS['lgc']='Legacy'
-DIVISIONS['lng']='Languages'
+DIVISIONS['lng']='Language'
 DIVISIONS['mar']='Marketing'
 DIVISIONS['pub']='Publishing'
 DIVISIONS['res']='Research'
-DIVISIONS['tra']='Translations'
 
 DIVISIONS_CHANNEL_MAP=""
 for code in "${!DIVISIONS[@]}"; do

@@ -68,7 +68,7 @@ services:
       - teap
     volumes:
       - ./config/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./data/gateway/:/www/media/mail_autoconfig:ro
+      - ./data/gateway/:/www/media/autoconfig/mail:ro
       - /etc/letsencrypt:/etc/letsencrypt:ro
     networks:
       - ldap-frontend
@@ -134,8 +134,8 @@ services:
     volumes:
       - ./data/ldap/data:/var/lib/ldap
       - ./data/ldap/slapd.d:/etc/ldap/slapd.d
-    ports:
-      - "389:389"
+    # ports:
+    #   - "389:389"
     networks:
       ldap-backend:
         aliases:
@@ -229,12 +229,63 @@ services:
     networks:
       - teap-frontend
 
+
+  db-roundcube:
+    image: postgres:alpine
+    restart: always
+    volumes:
+      - ./data/roundcube/db:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_PASSWORD=$ROUNDCUBE_POSTGRES_PASSWORD
+      # Nextcloud requires that it creates the DB during installation
+      - POSTGRES_DB=roundcubemail
+      - POSTGRES_USER=$ROUNDCUBE_POSTGRES_USER
+    networks:
+      roundcube-backend:
+        aliases:
+          - postgres
+
+
+  roundcube:
+    restart: on-failure
+    # image: roundcube/roundcubemail:1.4.x-apache
+    image: cspii/roundcube
+    ports:
+      - "8080:80"
+    volumes:
+      - ./data/roundcube/plugins:/var/www/html/plugins
+      - ./data/roundcube/config:/var/roundcube/config
+    environment:
+      - ROUNDCUBEMAIL_PLUGINS=identity_select managesieve
+
+      - ROUNDCUBEMAIL_DEFAULT_HOST=tls://${MAIL_HOSTNAME}.${DOMAINNAME}
+      - ROUNDCUBEMAIL_DEFAULT_PORT=143
+      - ROUNDCUBEMAIL_SMTP_SERVER=tls://${MAIL_HOSTNAME}.${DOMAINNAME}
+      - ROUNDCUBEMAIL_SMTP_PORT=587
+
+      - ROUNDCUBEMAIL_DB_TYPE=pgsql
+      - ROUNDCUBEMAIL_DB_USER=$ROUNDCUBE_POSTGRES_USER
+      - ROUNDCUBEMAIL_DB_PASSWORD=$ROUNDCUBE_POSTGRES_PASSWORD
+      - ROUNDCUBEMAIL_UPLOAD_MAX_FILESIZE=50M
+
+      - READER_DN=$READER_DN
+      - READER_PASSWORD=$READER_PASSWORD
+    networks:
+      - roundcube-backend
+      #  - ldap-backend
+      # - roundcube-frontend
+    depends_on:
+      - db-roundcube
+      #  - openldap
+
+
 # Custom network so all services can communicate using a FQDN
 networks:
   next-backend:
   next-frontend:
   rocket-backend:
   rocket-frontend:
+  roundcube-backend:
   ldap-backend:
   ldap-frontend:
   collabora-frontend:
