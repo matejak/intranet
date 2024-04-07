@@ -152,10 +152,37 @@ done
 LDAP_BASE_DN="${LDAP_BASE_DN: : -1}"
 
 
+declare -A FS_OWNERSHIP
+
+FS_OWNERSHIP["mail,/var/mail"]=docker:docker
+FS_OWNERSHIP["next,/var/www"]=www-data:www-data
+FS_OWNERSHIP["db-next,/var/lib/postgresql/data"]=postgres:postgres
+FS_OWNERSHIP["db-nocodb,/var/lib/postgresql/data"]=postgres:postgres
+FS_OWNERSHIP["gateway,/etc/nginx/conf.d"]=www-data:www-data
+FS_OWNERSHIP["mongo-rocket,/data/db"]=mongodb:root
+FS_OWNERSHIP["openldap,/var/lib/ldap"]=openldap:openldap
+FS_OWNERSHIP["jampy-newsletter,/jampy"]=root:root
+FS_OWNERSHIP["db-jampy-newsletter,/var/lib/postgresql/data"]=postgres:postgres
+FS_OWNERSHIP["keycloak,/opt/jboss/keycloak/themes"]=root:root
+FS_OWNERSHIP["db-keycloak,/var/lib/postgresql/data"]=postgres:postgres
+FS_OWNERSHIP["roundcube,/var/www/html/plugins"]=root:root
+FS_OWNERSHIP["roundcube,/var/roundcube/config"]=root:root
+FS_OWNERSHIP["db-roundcube,/var/lib/postgresql/data"]=postgres:postgres
+FS_OWNERSHIP["wikijs,/data"]=node:node
+FS_OWNERSHIP["db-wikijs,/var/lib/postgresql/data"]=postgres:postgres
+
+function settle_fs_ownership {
+	for pair in "${!FS_OWNERSHIP[@]}"; do
+		name=$(cut -f 1 -d , <<< $pair)
+		dir=$(cut -f 2 -d , <<< $pair)
+		docker-compose exec -u root $name chown -R ${FS_OWNERSHIP[$pair]} $dir
+	done
+}
+
 declare -A LDAP_CONFIGURATION
 LDAP_CONFIGURATION["lastJpegPhotoLookup"]="0"
-LDAP_CONFIGURATION["ldapAgentName"]="cn=$ADMIN_USER,$LDAP_BASE_DN"
-LDAP_CONFIGURATION["ldapAgentPassword"]="$ADMIN_PASSWORD"
+LDAP_CONFIGURATION["ldapAgentName"]="uid=reader,ou=special,$LDAP_BASE_DN"
+LDAP_CONFIGURATION["ldapAgentPassword"]="kintaro,beru"
 LDAP_CONFIGURATION["ldapAttributesForGroupSearch"]="cn;description"
 LDAP_CONFIGURATION["ldapBase"]="$LDAP_BASE_DN"
 LDAP_CONFIGURATION["ldapBaseGroups"]="$LDAP_BASE_DN"
@@ -568,6 +595,30 @@ function teap_flask {
 function configure_teap {
 	teap_flask db upgrade
 	teap_flask bootstrap
+}
+
+
+
+# $1: DB container name
+# $2: backup dir
+function backup_postgres_db {
+	local name backupdir
+	name=$1
+	backupdir=$2
+	# POSTGRES_USER is known only *inside* of the container
+	# docker-compose exec $name bash -c 'pg_dumpall -c -U $POSTGRES_USER' > $backupdir/dump_${name}_`date +%Y-%m-%d"_"%H_%M_%S`.sql
+	docker-compose exec $name bash -c 'pg_dumpall -c -U $POSTGRES_USER' > $backupdir/dump_${name}.sql
+}
+
+
+# $1: DB container name
+# $2: backup dir
+function backup_mongo_db {
+	local name backupdir
+	name=$1
+	backupdir=$2
+	# docker-compose exec $name mongodump --archive | gzip > $backupdir/dump_${name}_`date +%Y-%m-%d"_"%H_%M_%S`.sql.gz
+	docker-compose exec $name mongodump --archive | gzip > $backupdir/dump_${name}.sql.gz
 }
 
 
