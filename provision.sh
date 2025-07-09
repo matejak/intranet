@@ -2,6 +2,7 @@
 
 DOMAINNAME="${DOMAINNAME:-entint.org}"
 ADMIN_PASSWORD="${ADMIN_PASSWORD:-admin}"
+ADMIN_PASSWORD=enterprisey
 ADMIN_USER='admin'
 
 SSO_HOSTNAME='sso'
@@ -83,6 +84,22 @@ function change_mail_domain {
 }
 
 
+# $1: email address
+# $2: old in days, default 90
+function search_for_old_trashed_mails {
+	local old=${2:-90}
+	docker-compose exec mail doveadm search -u "$1"  mailbox Trash savedbefore "${old}d"
+}
+
+
+# $1: email address
+# $2: old in days, default 90
+function delete_old_trashed_mails {
+	local old=${2:-90}
+	docker-compose exec mail doveadm expunge -u "$1" mailbox Trash savedbefore "${old}d"
+}
+
+
 # $1: Arguments to doveadm as one single string
 function doveadm_exec {
 	docker-compose exec mail bash -c "doveadm $1"
@@ -120,7 +137,7 @@ function strip_string {
 # $1: ou name - e.g. ddea
 function dovecot_share_inboxes {
 	cns=()
-	ldap_extract '(objectClass=*)' cn cns "ou=$1"
+	ldap_extract '(&(mailEnabled=TRUE)(objectClass=*))' cn cns "ou=$1"
 	for cn in "${cns[@]}"; do
 		dovecot_share_inbox "$1" "$(strip_string "$cn")"
 	done
@@ -238,7 +255,6 @@ SAML_CONFIGURATION["security-logoutResponseSigned"]="1"
 SAML_CONFIGURATION["security-wantMessagesSigned"]="1"
 SAML_CONFIGURATION["security-wantAssertionsSigned"]="1"
 SAML_CONFIGURATION["saml-attribute-mapping-displayName_mapping"]=""
-SAML_CONFIGURATION["general-require_provisioned_account"]="1"
 
 # Identity Provider certificate - That's Keycloak
 SAML_CONFIGURATION["idp-x509cert"]=""
@@ -375,7 +391,7 @@ function nextcloud_exec {
 
 
 function keycloak_exec {
-	docker-compose exec keycloak '/opt/jboss/keycloak/bin/kcadm.sh' "$@"
+	docker-compose exec keycloak '/opt/keycloak/bin/kcadm.sh' "$@"
 }
 
 
@@ -441,23 +457,24 @@ function configure_nextcloud_ldap {
 
 
 function configure_nextcloud_saml_except_certs {
+	DEFAULT_SAML_PROVIDER=1
 	for item in "${!SAML_CONFIGURATION[@]}"; do
 		grep -q 'x509cert' <<< $item && continue
 		grep -q 'privateKey' <<< $item && continue
-		nextcloud_exec "config:app:set" --value "${SAML_CONFIGURATION[$item]}" user_saml "$item"
+		nextcloud_exec "saml:config:set" "--$item" "${SAML_CONFIGURATION[$item]}" $DEFAULT_SAML_PROVIDER
 	done
 }
 
 
 # $1: Literal Client ID URL
 function _keycloak_client_id {
-	keycloak_exec config credentials --server http://localhost:8080/auth --realm master --user "$ADMIN_USER" --password "$ADMIN_PASSWORD" &> /dev/null
+	keycloak_exec config credentials --server http://localhost:8080 --realm master --user "$ADMIN_USER" --password "$ADMIN_PASSWORD" &> /dev/null
 	printf "%s" "$(keycloak_exec get clients -q "clientId=$1" -F id | jq -M --raw-output '.[0].id')"
 }
 
 
 function configure_keycloak {
-	keycloak_exec config credentials --server http://localhost:8080/auth --realm master --user "$ADMIN_USER" --password "$ADMIN_PASSWORD"
+	keycloak_exec config credentials --server http://localhost:8080 --realm master --user "$ADMIN_USER" --password "$ADMIN_PASSWORD"
 	client_id=$(_keycloak_client_id $NEXTCLOUD_HOSTNAME)
 	if test "$client_id" = null; then
 		echo 'ERRORRE!'
@@ -467,6 +484,49 @@ function configure_keycloak {
 }
 
 
+function _configure_teap_saml_certs {
+	tmp_dir=$(mktemp -d -t certs-XXXXXX)
+	sp_cert="$tmp_dir/myservice.cert"
+	sp_key="$tmp_dir/myservice.key"
+	openssl req -x509 -sha256 -nodes -days 3650 -newkey rsa:2048 -batch -keyout "$sp_key" -out "$sp_cert"
+
+	echo Authorize to KC
+	# SP - KEYCLOAK PART
+	keycloak_exec config credentials --server http://localhost:8080 --realm master --user "$ADMIN_USER" --password "$ADMIN_PASSWORD"
+
+	# SP - TEAP PART
+	# Be sure to disable assertions encryption and document signing.
+	# Otherwise, the Python SAML client is confused by too many keys.
+	# Related: https://github.com/XML-Security/signxml/issues/143
+	echo get TEAP Client ID KC
+	client_id=$(_keycloak_client_id "https://$TEAP_HOSTNAME.$DOMAINNAME/saml/metadata.xml")
+	echo ID: $client_id
+	echo update KC cert
+	test -n "$client_id" && keycloak_exec update "clients/$client_id" -s 'attributes."saml.signing.certificate"='"$(cat "$sp_cert" | head -n -1 | tail -n +2)"
+	echo update teap sp cert
+	teap_flask saml sp-cert -- "$(cat "$sp_cert")"
+	echo update teap sp key
+	teap_flask saml sp-key -- "$(cat "$sp_key")"
+
+	# cleanup
+	rm -f "$sp_cert" "$sp_key"
+
+	# IdP - KEYCLOAK PART
+	idp_cert="$tmp_dir/myidp.cert"
+	printf '%s\n' '-----BEGIN CERTIFICATE-----' > "$idp_cert"
+	# keycloak_realm_cert=$(keycloak_exec get realms/master/keys -F 'keys(publicKey)' | jq -M --raw-output 'flatten|add.publicKey')
+	keycloak_realm_cert=$(keycloak_exec get realms/master/keys -F 'keys(certificate)' | jq -M --raw-output 'flatten|add.certificate')
+	printf '%s\n' "$keycloak_realm_cert" >> "$idp_cert"
+	printf '%s\n' '-----END CERTIFICATE-----' >> "$idp_cert"
+
+	# IdP - TEAP PART
+	teap_flask saml idp-cert -- "$(cat "$idp_cert")"
+
+	# cleanup
+	rm -f "$idp_cert"
+	rm -rf "$tmp_dir"
+}
+
 function configure_saml_certs {
 	tmp_dir=$(mktemp -d -t certs-XXXXXX)
 	sp_cert="$tmp_dir/myservice.cert"
@@ -474,12 +534,13 @@ function configure_saml_certs {
 	openssl req -x509 -sha256 -nodes -days 3650 -newkey rsa:2048 -batch -keyout "$sp_key" -out "$sp_cert"
 
 	# SP - KEYCLOAK PART
-	keycloak_exec config credentials --server http://localhost:8080/auth --realm master --user "$ADMIN_USER" --password "$ADMIN_PASSWORD"
+	keycloak_exec config credentials --server http://localhost:8080 --realm master --user "$ADMIN_USER" --password "$ADMIN_PASSWORD"
 	# SP - NEXTCLOUD PART
+	DEFAULT_SAML_PROVIDER=1
 	client_id=$(_keycloak_client_id "https://$NEXTCLOUD_HOSTNAME.$DOMAINNAME/apps/user_saml/saml/metadata")
 	keycloak_exec update "clients/$client_id" -s 'attributes."saml.signing.certificate"='"$(cat "$sp_cert" | head -n -1 | tail -n +2)"
-	nextcloud_exec "config:app:set" --value="$(cat "$sp_cert")" user_saml "sp-x509cert"
-	nextcloud_exec "config:app:set" --value="$(cat "$sp_key")" user_saml "sp-privateKey"
+	nextcloud_exec "saml:config:set" "--sp-x509cert" "$(cat "$sp_cert")" $DEFAULT_SAML_PROVIDER
+	nextcloud_exec "saml:config:set" "--sp-privateKey" "$(cat "$sp_key")" $DEFAULT_SAML_PROVIDER
 
 	# SP - ROCKET PART
 	client_id=$(_keycloak_client_id "https://$ROCKETCHAT_HOSTNAME.$DOMAINNAME/_saml/metadata/keycloak")
@@ -508,7 +569,7 @@ function configure_saml_certs {
 	printf '%s\n' '-----END CERTIFICATE-----' >> "$idp_cert"
 
 	# IdP - NEXTCLOUD PART
-	nextcloud_exec "config:app:set" --value="$(cat "$idp_cert")" user_saml "idp-x509cert"
+	nextcloud_exec "saml:config:set" "--idp-x509cert" "$(cat "$idp_cert")" $DEFAULT_SAML_PROVIDER
 
 	# IdP - ROCKET PART
 	# mongo_rocket_eval_update rocketchat_settings SAML_Custom_Default_cert "\"$keycloak_realm_cert\""
@@ -617,8 +678,15 @@ function backup_mongo_db {
 	local name backupdir
 	name=$1
 	backupdir=$2
-	# docker-compose exec $name mongodump --archive | gzip > $backupdir/dump_${name}_`date +%Y-%m-%d"_"%H_%M_%S`.sql.gz
-	docker-compose exec $name mongodump --archive | gzip > $backupdir/dump_${name}.sql.gz
+	docker-compose exec $name mongodump --archive > $backupdir/dump_${name}.archive
+}
+
+
+function prune_mongo_db {
+	true
+	# Do something like:
+	# db.rocketchat_sessions.deleteMany({ _updatedAt: { $lt: new ISODate("2024-01-01T00:00:00Z") } })
+	# db.rocketchat_statistics.deleteMany({ _updatedAt: { $lt: new ISODate("2024-01-01T00:00:00Z") } })
 }
 
 
