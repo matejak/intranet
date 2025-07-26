@@ -10,16 +10,32 @@ NEXTCLOUD_HOSTNAME="${NEXTCLOUD_HOSTNAME:-next}"
 ROCKETCHAT_HOSTNAME="${ROCKETCHAT_HOSTNAME:-rocket}"
 TEAP_HOSTNAME="${TEAP_HOSTNAME:-teap}"
 COLLABORA_HOSTNAME="${COLLABORA_HOSTNAME:-collabora}"
+KEYCLOAK_HOSTNAME="${KEYCLOAK_HOSTNAME:-sso}"
 MAIL_SUBDOMAIN=mail
 
 MAIL_HOST=$DOMAINNAME
 test -n "$MAIL_SUBDOMAIN" && MAIL_HOST="$MAIL_SUBDOMAIN.$MAIL_HOST"
 
+NEXTCLOUD_WANT_MAIL=no
 IMAP_HOSTNAME=imap.$MAIL_HOST
 SMTP_HOSTNAME=smtp.$MAIL_HOST
 
+LOCAL_SETUP="${LOCAL_SETUP:-no}"
 # yes if we are testing things locally, i.e. without a real domain
-LOCAL_SETUP="${LOCAL_SETUP:-yes}"
+if test "$DOMAINNAME" = localhost; then
+	LOCAL_SETUP=yes
+	NEXTCLOUD_ROOT_URI=http://localhost:1181
+	ROCKETCHAT_ROOT_URI=http://localhost:1182
+	KEYCLOAK_ROOT_URI=http://localhost:1184
+	COLLABORA_ROOT_URI=http://localhost:9999
+	TEAP_ROOT_URI=http://localhost:9999
+else
+	NEXTCLOUD_ROOT_URI=https://$NEXTCLOUD_HOSTNAME.$DOMAINNAME
+	ROCKETCHAT_ROOT_URI=https://$ROCKETCHAT_HOSTNAME.$DOMAINNAME
+	COLLABORA_ROOT_URI=https://$COLLABORA_HOSTNAME.$DOMAINNAME
+	KEYCLOAK_ROOT_URI=https://$KEYCLOAK_HOSTNAME.$DOMAINNAME
+	TEAP_ROOT_URI=https://$TEAP_HOSTNAME.$DOMAINNAME
+fi
 
 
 # $1: db host stem
@@ -237,8 +253,8 @@ LDAP_CONFIGURATION["useMemberOfToDetectMembership"]="1"
 
 declare -A SAML_CONFIGURATION
 SAML_CONFIGURATION["general-uid_mapping"]="username"
-SAML_CONFIGURATION["idp-entityId"]="https://$SSO_HOSTNAME.$DOMAINNAME/auth/realms/master"
-SAML_CONFIGURATION["idp-singleSignOnService.url"]="https://$SSO_HOSTNAME.$DOMAINNAME/auth/realms/master/protocol/saml"
+SAML_CONFIGURATION["idp-entityId"]="$KEYCLOAK_ROOT_URI/auth/realms/master"
+SAML_CONFIGURATION["idp-singleSignOnService.url"]="$KEYCLOAK_ROOT_URI/auth/realms/master/protocol/saml"
 SAML_CONFIGURATION["type"]="saml"
 SAML_CONFIGURATION["general-idp0_display_name"]="SAMLLogin"
 SAML_CONFIGURATION["general-allow_multiple_user_back_ends"]="1"
@@ -248,7 +264,7 @@ SAML_CONFIGURATION["sp-privateKey"]=""
 SAML_CONFIGURATION["sp-x509cert"]=""
 
 SAML_CONFIGURATION["saml-attribute-mapping-email_mapping"]=""
-SAML_CONFIGURATION["idp-singleLogoutService.url"]="https://$SSO_HOSTNAME.$DOMAINNAME/auth/realms/master/protocol/saml"
+SAML_CONFIGURATION["idp-singleLogoutService.url"]="$KEYCLOAK_ROOT_URI/auth/realms/master/protocol/saml"
 SAML_CONFIGURATION["security-authnRequestsSigned"]="1"
 SAML_CONFIGURATION["security-logoutRequestSigned"]="1"
 SAML_CONFIGURATION["security-logoutResponseSigned"]="1"
@@ -261,7 +277,7 @@ SAML_CONFIGURATION["idp-x509cert"]=""
 
 
 declare -A OFFICE_CONFIGURATION
-OFFICE_CONFIGURATION["wopi_url"]="https://$COLLABORA_HOSTNAME.$DOMAINNAME"
+OFFICE_CONFIGURATION["wopi_url"]="$COLLABORA_ROOT_URI"
 OFFICE_CONFIGURATION["public_wopi_url"]="${OFFICE_CONFIGURATION[wopi_url]}"
 
 
@@ -368,9 +384,9 @@ MONGO_SAML[Custom_Default_button_color]='"#1d74f5"'
 MONGO_SAML[Custom_Default_button_label_color]='"#FFFFFF"'
 MONGO_SAML[Custom_Default_button_label_text]='"SAML login"'
 MONGO_SAML[Custom_Default_debug]='true'
-MONGO_SAML[Custom_Default_entry_point]="\"https://sso.$DOMAINNAME/auth/realms/master/protocol/saml\""
+MONGO_SAML[Custom_Default_entry_point]="\"$KEYCLOAK_ROOT_URI/auth/realms/master/protocol/saml\""
 MONGO_SAML[Custom_Default_generate_username]='false'
-MONGO_SAML[Custom_Default_idp_slo_redirect_url]="\"https://sso.$DOMAINNAME/auth/realms/master/protocol/saml\""
+MONGO_SAML[Custom_Default_idp_slo_redirect_url]="\"$KEYCLOAK_ROOT_URI/auth/realms/master/protocol/saml\""
 MONGO_SAML[Custom_Default_issuer]="\"https://$ROCKETCHAT_HOSTNAME.$DOMAINNAME/_saml/metadata/keycloak"\"
 MONGO_SAML[Custom_Default_logout_behaviour]='"SAML"'
 MONGO_SAML[Custom_Default_mail_overwrite]='false'
@@ -430,14 +446,23 @@ function configure_calendar {
 
 
 function configure_nextcloud {
-	apps_enable groupfolders user_ldap user_saml richdocuments mail calendar deck
-	test "$LOCAL_SETUP" = yes || nextcloud_exec "config:system:set" --value "https" "overwriteprotocol"
-	for item in "${!MAIL_DEFAULTS[@]}"; do
-		nextcloud_exec "config:system:set" --value "${MAIL_DEFAULTS[$item]}" app.mail.accounts.default "$item"
-	done
-	for item in "${!MAIL_INT_CONFIGURATION[@]}"; do
-		nextcloud_exec "config:system:set" app.mail --value "${MAIL_INT_CONFIGURATION[$item]}" --type int "$item"
-	done
+	apps_enable groupfolders user_ldap user_saml richdocuments calendar deck
+	if test "$LOCAL_SETUP" = yes; then
+		nextcloud_exec config:system:set --type string --value "localhost" -- trusted_domains 0
+		nextcloud_exec config:system:set --type string --value "gateway" -- trusted_domains 1
+	else
+		nextcloud_exec config:system:set --type string --value "$NEXTCLOUD_HOSTNAME" -- trusted_domains 2
+		nextcloud_exec "config:system:set" --value "https" "overwriteprotocol"
+	fi
+	if test "$NEXTCLOUD_WANT_MAIL" = yes; then
+		apps_enable mail
+		for item in "${!MAIL_DEFAULTS[@]}"; do
+			nextcloud_exec "config:system:set" --value "${MAIL_DEFAULTS[$item]}" app.mail.accounts.default "$item"
+		done
+		for item in "${!MAIL_INT_CONFIGURATION[@]}"; do
+			nextcloud_exec "config:system:set" app.mail --value "${MAIL_INT_CONFIGURATION[$item]}" --type int "$item"
+		done
+	fi
 }
 
 
@@ -499,7 +524,7 @@ function _configure_teap_saml_certs {
 	# Otherwise, the Python SAML client is confused by too many keys.
 	# Related: https://github.com/XML-Security/signxml/issues/143
 	echo get TEAP Client ID KC
-	client_id=$(_keycloak_client_id "https://$TEAP_HOSTNAME.$DOMAINNAME/saml/metadata.xml")
+	client_id=$(_keycloak_client_id "$TEAP_ROOT_URI/saml/metadata.xml")
 	echo ID: $client_id
 	echo update KC cert
 	test -n "$client_id" && keycloak_exec update "clients/$client_id" -s 'attributes."saml.signing.certificate"='"$(cat "$sp_cert" | head -n -1 | tail -n +2)"
@@ -537,13 +562,13 @@ function configure_saml_certs {
 	keycloak_exec config credentials --server http://localhost:8080 --realm master --user "$ADMIN_USER" --password "$ADMIN_PASSWORD"
 	# SP - NEXTCLOUD PART
 	DEFAULT_SAML_PROVIDER=1
-	client_id=$(_keycloak_client_id "https://$NEXTCLOUD_HOSTNAME.$DOMAINNAME/apps/user_saml/saml/metadata")
+	client_id=$(_keycloak_client_id "$NEXTCLOUD_ROOT_URI/apps/user_saml/saml/metadata")
 	keycloak_exec update "clients/$client_id" -s 'attributes."saml.signing.certificate"='"$(cat "$sp_cert" | head -n -1 | tail -n +2)"
 	nextcloud_exec "saml:config:set" "--sp-x509cert" "$(cat "$sp_cert")" $DEFAULT_SAML_PROVIDER
 	nextcloud_exec "saml:config:set" "--sp-privateKey" "$(cat "$sp_key")" $DEFAULT_SAML_PROVIDER
 
 	# SP - ROCKET PART
-	client_id=$(_keycloak_client_id "https://$ROCKETCHAT_HOSTNAME.$DOMAINNAME/_saml/metadata/keycloak")
+	client_id=$(_keycloak_client_id "$ROCKETCHAT_ROOT_URI/_saml/metadata/keycloak")
 	keycloak_exec update "clients/$client_id" -s 'attributes."saml.signing.certificate"='"$(cat "$sp_cert" | head -n -1 | tail -n +2)"
 	mongo_rocket_eval_update rocketchat_settings SAML_Custom_Default_public_cert "\"$(escape_newlines "$(cat "$sp_cert")")\""
 	mongo_rocket_eval_update rocketchat_settings SAML_Custom_Default_private_key "\"$(escape_newlines "$(cat "$sp_key")")\""
@@ -552,7 +577,7 @@ function configure_saml_certs {
 	# Be sure to disable assertions encryption and document signing.
 	# Otherwise, the Python SAML client is confused by too many keys.
 	# Related: https://github.com/XML-Security/signxml/issues/143
-	client_id=$(_keycloak_client_id "https://$TEAP_HOSTNAME.$DOMAINNAME/saml/metadata.xml")
+	client_id=$(_keycloak_client_id "$TEAP_ROOT_URI/saml/metadata.xml")
 	test -n "$client_id" && keycloak_exec update "clients/$client_id" -s 'attributes."saml.signing.certificate"='"$(cat "$sp_cert" | head -n -1 | tail -n +2)"
 	teap_flask saml sp-cert -- "$(cat "$sp_cert")"
 	teap_flask saml sp-key -- "$(cat "$sp_key")"
@@ -590,7 +615,7 @@ function mongo_rocket {
 
 
 function mongo_rocket_eval {
-	mongo_rocket mongo 'db/rocketchat' --eval "$1"
+	mongo_rocket mongosh 'db/rocketchat' --eval "$1"
 }
 
 
