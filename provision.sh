@@ -2,7 +2,6 @@
 
 DOMAINNAME="${DOMAINNAME:-entint.org}"
 ADMIN_PASSWORD="${ADMIN_PASSWORD:-admin}"
-ADMIN_PASSWORD=enterprisey
 ADMIN_USER='admin'
 
 SSO_HOSTNAME='sso'
@@ -67,7 +66,8 @@ function ldap_query {
 	filter="$1"
 	output_field="$2"
 	test -n "$3" && search_base_restriction="$3,"
-	docker-compose exec openldap bash -c "ldapsearch -b \"${search_base_restriction}\$LDAP_BASE_DN\" -x -w \"\$LDAP_ADMIN_PASSWORD\" -D \"cn=admin,\$LDAP_BASE_DN\" \"$filter\" \"$output_field\""
+	docker-compose exec openldap ldapsearch -b "${search_base_restriction}$LDAP_BASE_DN" -x -w "$ADMIN_PASSWORD" -D "$ADMIN_DN" "$filter" "$output_field"
+	# docker-compose exec openldap bash -c "ldapsearch -b \"${search_base_restriction}\$LDAP_BASE_DN\" -x -w \"\$LDAP_ADMIN_PASSWORD\" -D \"cn=admin,\$LDAP_BASE_DN\" \"$filter\" \"$output_field\""
 }
 
 
@@ -85,7 +85,7 @@ function ldap_extract {
 # $3: what to query
 # We use bash statement to let the container do the env var substitution
 function ldap_query_ou {
-	docker-compose exec openldap bash -c "ldapsearch -b \"ou=$1,\$LDAP_BASE_DN\" -x -w \"\$LDAP_ADMIN_PASSWORD\" -D \"cn=admin,\$LDAP_BASE_DN\" \"(cn=$2)\" \"$3\""
+	docker-compose exec openldap bash -c "ldapsearch -b \"ou=$1,\$LDAP_BASE_DN\" -x -w \"\$LDAP_ADMIN_PASSWORD\" -D \"$ADMIN_DN\" \"(cn=$2)\" \"$3\""
 }
 
 
@@ -183,6 +183,11 @@ for dc in "${DOMAIN_COMPONENTS[@]}"; do
 done
 # Trim the last comma
 LDAP_BASE_DN="${LDAP_BASE_DN: : -1}"
+ADMIN_DN="cn=$ADMIN_USER,$LDAP_BASE_DN"
+READER_DN="uid=reader,ou=special,$LDAP_BASE_DN"
+MAINT_DN="uid=maintenance,ou=special,$LDAP_BASE_DN"
+ALL_PEOPLE_DN="ou=people,$LDAP_BASE_DN"
+ACTIVE_PEOPLE_DN="ou=active,$ALL_PEOPLE_DN"
 
 
 declare -A FS_OWNERSHIP
@@ -214,12 +219,10 @@ function settle_fs_ownership {
 
 declare -A LDAP_CONFIGURATION
 LDAP_CONFIGURATION["lastJpegPhotoLookup"]="0"
-LDAP_CONFIGURATION["ldapAgentName"]="uid=reader,ou=special,$LDAP_BASE_DN"
-LDAP_CONFIGURATION["ldapAgentPassword"]="kintaro,beru"
 LDAP_CONFIGURATION["ldapAttributesForGroupSearch"]="cn;description"
 LDAP_CONFIGURATION["ldapBase"]="$LDAP_BASE_DN"
 LDAP_CONFIGURATION["ldapBaseGroups"]="$LDAP_BASE_DN"
-LDAP_CONFIGURATION["ldapBaseUsers"]="ou=people,$LDAP_BASE_DN"
+LDAP_CONFIGURATION["ldapBaseUsers"]="$ACTIVE_PEOPLE_DN"
 LDAP_CONFIGURATION["ldapCacheTTL"]="600"
 LDAP_CONFIGURATION["ldapConfigurationActive"]="1"
 LDAP_CONFIGURATION["ldapEmailAttribute"]="mail"
@@ -251,29 +254,34 @@ LDAP_CONFIGURATION["turnOnPasswordChange"]="0"
 LDAP_CONFIGURATION["useMemberOfToDetectMembership"]="1"
 
 
-declare -A SAML_CONFIGURATION
-SAML_CONFIGURATION["general-uid_mapping"]="username"
-SAML_CONFIGURATION["idp-entityId"]="$KEYCLOAK_ROOT_URI/auth/realms/master"
-SAML_CONFIGURATION["idp-singleSignOnService.url"]="$KEYCLOAK_ROOT_URI/auth/realms/master/protocol/saml"
-SAML_CONFIGURATION["type"]="saml"
-SAML_CONFIGURATION["general-idp0_display_name"]="SAMLLogin"
-SAML_CONFIGURATION["general-allow_multiple_user_back_ends"]="1"
+declare -A LDAP_INDIRECT_CONFIGURATION
+LDAP_INDIRECT_CONFIGURATION["ldapAgentPassword"]=LDAP_READER_PASSWORD
+LDAP_INDIRECT_CONFIGURATION["ldapAgentName"]=LDAP_READER_DN
+
+
+declare -A NEXT_SAML_CONFIGURATION
+NEXT_SAML_CONFIGURATION["general-uid_mapping"]="username"
+NEXT_SAML_CONFIGURATION["idp-entityId"]="$KEYCLOAK_ROOT_URI/auth/realms/master"
+NEXT_SAML_CONFIGURATION["idp-singleSignOnService.url"]="$KEYCLOAK_ROOT_URI/auth/realms/master/protocol/saml"
+NEXT_SAML_CONFIGURATION["type"]="saml"
+NEXT_SAML_CONFIGURATION["general-idp0_display_name"]="SAMLLogin"
+NEXT_SAML_CONFIGURATION["general-allow_multiple_user_back_ends"]="1"
 
 # Service Provider certificate and key - That's us, Nextcloud
-SAML_CONFIGURATION["sp-privateKey"]=""
-SAML_CONFIGURATION["sp-x509cert"]=""
+NEXT_SAML_CONFIGURATION["sp-privateKey"]=""
+NEXT_SAML_CONFIGURATION["sp-x509cert"]=""
 
-SAML_CONFIGURATION["saml-attribute-mapping-email_mapping"]=""
-SAML_CONFIGURATION["idp-singleLogoutService.url"]="$KEYCLOAK_ROOT_URI/auth/realms/master/protocol/saml"
-SAML_CONFIGURATION["security-authnRequestsSigned"]="1"
-SAML_CONFIGURATION["security-logoutRequestSigned"]="1"
-SAML_CONFIGURATION["security-logoutResponseSigned"]="1"
-SAML_CONFIGURATION["security-wantMessagesSigned"]="1"
-SAML_CONFIGURATION["security-wantAssertionsSigned"]="1"
-SAML_CONFIGURATION["saml-attribute-mapping-displayName_mapping"]=""
+NEXT_SAML_CONFIGURATION["saml-attribute-mapping-email_mapping"]=""
+NEXT_SAML_CONFIGURATION["idp-singleLogoutService.url"]="$KEYCLOAK_ROOT_URI/auth/realms/master/protocol/saml"
+NEXT_SAML_CONFIGURATION["security-authnRequestsSigned"]="1"
+NEXT_SAML_CONFIGURATION["security-logoutRequestSigned"]="1"
+NEXT_SAML_CONFIGURATION["security-logoutResponseSigned"]="1"
+NEXT_SAML_CONFIGURATION["security-wantMessagesSigned"]="1"
+NEXT_SAML_CONFIGURATION["security-wantAssertionsSigned"]="1"
+NEXT_SAML_CONFIGURATION["saml-attribute-mapping-displayName_mapping"]=""
 
 # Identity Provider certificate - That's Keycloak
-SAML_CONFIGURATION["idp-x509cert"]=""
+NEXT_SAML_CONFIGURATION["idp-x509cert"]=""
 
 
 declare -A OFFICE_CONFIGURATION
@@ -328,12 +336,12 @@ done
 declare -A MONGO_LDAP
 MONGO_LDAP[Authentication]='true'
 MONGO_LDAP[Authentication_Password]="\"$ADMIN_PASSWORD\""
-MONGO_LDAP[Authentication_UserDN]="\"cn=$ADMIN_USER,$LDAP_BASE_DN\""
+MONGO_LDAP[Authentication_UserDN]="\"$ADMIN_DN\""
 MONGO_LDAP[Background_Sync]='true'
 MONGO_LDAP[Background_Sync_Import_New_Users]='true'
 MONGO_LDAP[Background_Sync_Interval]='"Every 2 hours"'
 MONGO_LDAP[Background_Sync_Keep_Existant_Users_Updated]='true'
-MONGO_LDAP[BaseDN]="\"ou=people,$LDAP_BASE_DN\""
+MONGO_LDAP[BaseDN]="\"$ACTIVE_PEOPLE_DN\""
 MONGO_LDAP[CA_Cert]='""'
 MONGO_LDAP[Connect_Timeout]='1000'
 MONGO_LDAP[Default_Domain]="\"$DOMAINNAME\""
@@ -366,7 +374,7 @@ MONGO_LDAP[Sync_User_Data_Groups_AutoChannels]='true'
 MONGO_LDAP[Sync_User_Data_Groups_AutoChannelsMap]="\"{\\n${DIVISIONS_CHANNEL_MAP}\\t\\\"everybody\\\": \\\"general\\\"\\n}\""
 MONGO_LDAP[Sync_User_Data_Groups_AutoChannels_Admin]='"rocket.cat"'
 MONGO_LDAP[Sync_User_Data_Groups_AutoRemove]='false'
-MONGO_LDAP[Sync_User_Data_Groups_BaseDN]='"ou=divisions,dc=cspii,dc=org"'
+MONGO_LDAP[Sync_User_Data_Groups_BaseDN]="\"ou=divisions,$LDAP_BASE_DN\""
 MONGO_LDAP[Sync_User_Data_Groups_Enforce_AutoChannels]='false'
 MONGO_LDAP[Sync_User_Data_Groups_Filter]='"(&(cn=#{groupName})(memberUid=#{username}))"'
 # MONGO_LDAP[Test_Connection]='"ldap_test_connection"'
@@ -402,7 +410,20 @@ MONGO_SAML[Custom_Default_public_cert]=''
 # Don't allow registrations
 
 function nextcloud_exec {
-	docker-compose exec --user www-data "$NEXTCLOUD_HOSTNAME" php occ --no-ansi "$@"
+	docker-compose exec --user www-data "$NEXTCLOUD_HOSTNAME" "$@"
+}
+
+
+function nextcloud_exec_occ {
+	nextcloud_exec php occ --no-ansi "$@"
+}
+
+
+# $1: LDAP Config ID
+# $2: Configuration key
+# $3: Variable holding value
+function nextcloud_exec_occ_set_ldap_indirect {
+	nextcloud_exec "bash" -c "php occ --no-ansi ldap:set-config \"$1\" \"$2\" \"\$$3\""
 }
 
 
@@ -411,36 +432,42 @@ function keycloak_exec {
 }
 
 
+function keycloak_create_saml_client {
+	true
+	# See also: https://stackoverflow.com/questions/53662807/configuring-keycloak-saml-from-the-command-line
+}
+
+
 function apps_enable {
 	for app in "$@"; do
-		nextcloud_exec "app:install" "$app"
-		nextcloud_exec "app:enable" "$app"
+		nextcloud_exec_occ "app:install" "$app"
+		nextcloud_exec_occ "app:enable" "$app"
 	done
 }
 
 
 function ldap_has_config {
-	out=$(nextcloud_exec ldap:show-config)
+	out=$(nextcloud_exec_occ ldap:show-config)
 	test -n "$out" && return 0 || return 1
 }
 
 
 function ldap_config_id {
-	out=$(nextcloud_exec ldap:show-config)
+	out=$(nextcloud_exec_occ ldap:show-config)
 	printf "%s" "$(grep '\<Configuration\>' <<< "${out}" | cut -f 3 -d '|' | tr -d '[:blank:]')"
 }
 
 
 function configure_office {
 	for item in "${!OFFICE_CONFIGURATION[@]}"; do
-		nextcloud_exec "config:app:set" --value "${OFFICE_CONFIGURATION[$item]}" richdocuments "$item"
+		nextcloud_exec_occ "config:app:set" --value "${OFFICE_CONFIGURATION[$item]}" richdocuments "$item"
 	done
 }
 
 
 function configure_calendar {
 	for item in "${!CALENDAR_CONFIGURATION[@]}"; do
-		nextcloud_exec "config:app:set" --value "${CALENDAR_CONFIGURATION[$item]}" dav "$item"
+		nextcloud_exec_occ "config:app:set" --value "${CALENDAR_CONFIGURATION[$item]}" dav "$item"
 	done
 }
 
@@ -448,19 +475,19 @@ function configure_calendar {
 function configure_nextcloud {
 	apps_enable groupfolders user_ldap user_saml richdocuments calendar deck
 	if test "$LOCAL_SETUP" = yes; then
-		nextcloud_exec config:system:set --type string --value "localhost" -- trusted_domains 0
-		nextcloud_exec config:system:set --type string --value "gateway" -- trusted_domains 1
+		nextcloud_exec_occ config:system:set --type string --value "localhost" -- trusted_domains 0
+		nextcloud_exec_occ config:system:set --type string --value "gateway" -- trusted_domains 1
 	else
-		nextcloud_exec config:system:set --type string --value "$NEXTCLOUD_HOSTNAME" -- trusted_domains 2
-		nextcloud_exec "config:system:set" --value "https" "overwriteprotocol"
+		nextcloud_exec_occ config:system:set --type string --value "$NEXTCLOUD_HOSTNAME" -- trusted_domains 2
+		nextcloud_exec_occ "config:system:set" --value "https" "overwriteprotocol"
 	fi
 	if test "$NEXTCLOUD_WANT_MAIL" = yes; then
 		apps_enable mail
 		for item in "${!MAIL_DEFAULTS[@]}"; do
-			nextcloud_exec "config:system:set" --value "${MAIL_DEFAULTS[$item]}" app.mail.accounts.default "$item"
+			nextcloud_exec_occ "config:system:set" --value "${MAIL_DEFAULTS[$item]}" app.mail.accounts.default "$item"
 		done
 		for item in "${!MAIL_INT_CONFIGURATION[@]}"; do
-			nextcloud_exec "config:system:set" app.mail --value "${MAIL_INT_CONFIGURATION[$item]}" --type int "$item"
+			nextcloud_exec_occ "config:system:set" app.mail --value "${MAIL_INT_CONFIGURATION[$item]}" --type int "$item"
 		done
 	fi
 }
@@ -470,39 +497,47 @@ function configure_nextcloud_ldap {
 	if ldap_has_config; then
 		c_id=$(ldap_config_id)
 	else
-		out=$(nextcloud_exec 'ldap:create-empty-config')
+		out=$(nextcloud_exec_occ 'ldap:create-empty-config')
 		c_id=$(ldap_config_id)
 		# c_id=$(sed -e 's/.*configID\s*//' <<< "$out")
 	fi
+	for item in "${!LDAP_INDIRECT_CONFIGURATION[@]}"; do
+		nextcloud_exec_occ_set_ldap_indirect "$c_id" "$item" "${LDAP_INDIRECT_CONFIGURATION[$item]}"
+	done
 
 	for item in "${!LDAP_CONFIGURATION[@]}"; do
-		nextcloud_exec "ldap:set-config" "$c_id" "$item" "${LDAP_CONFIGURATION[$item]}"
+		nextcloud_exec_occ "ldap:set-config" "$c_id" "$item" "${LDAP_CONFIGURATION[$item]}"
 	done
 }
 
 
 function configure_nextcloud_saml_except_certs {
 	DEFAULT_SAML_PROVIDER=1
-	for item in "${!SAML_CONFIGURATION[@]}"; do
+	for item in "${!NEXT_SAML_CONFIGURATION[@]}"; do
 		grep -q 'x509cert' <<< $item && continue
 		grep -q 'privateKey' <<< $item && continue
-		nextcloud_exec "saml:config:set" "--$item" "${SAML_CONFIGURATION[$item]}" $DEFAULT_SAML_PROVIDER
+		nextcloud_exec_occ "saml:config:set" "--$item" "${NEXT_SAML_CONFIGURATION[$item]}" $DEFAULT_SAML_PROVIDER
 	done
+}
+
+
+function _keycloak_login {
+	keycloak_exec config credentials --server http://localhost:8080 --realm master --user "$ADMIN_USER" --password "$ADMIN_PASSWORD" &> /dev/null
 }
 
 
 # $1: Literal Client ID URL
 function _keycloak_client_id {
-	keycloak_exec config credentials --server http://localhost:8080 --realm master --user "$ADMIN_USER" --password "$ADMIN_PASSWORD" &> /dev/null
-	printf "%s" "$(keycloak_exec get clients -q "clientId=$1" -F id | jq -M --raw-output '.[0].id')"
+	printf "%s" "$(keycloak_exec get clients --realm master --server http://localhost:8080 -q "clientId=$1" -F id | jq -M --raw-output '.[0].id')"
 }
 
 
-function configure_keycloak {
-	keycloak_exec config credentials --server http://localhost:8080 --realm master --user "$ADMIN_USER" --password "$ADMIN_PASSWORD"
-	client_id=$(_keycloak_client_id $NEXTCLOUD_HOSTNAME)
-	if test "$client_id" = null; then
-		echo 'ERRORRE!'
+function configure_keycloak_next {
+	_keycloak_login
+	client_id="$NEXTCLOUD_ROOT_URI/index.php/apps/user_saml/saml/metadata"
+	existing_client_id=$(_keycloak_client_id "$client_id")
+	if test "$existing_client_id" = null; then
+		keycloak_exec create clients -r master -s "clientId=$client_id" -s protocol=saml -s enabled=true
 	fi
 	# TODO: Create the Nextcloud client by downloading its SAML metadata and supplying it to the API
 	# TODO: get the mappings, set mappings and uniqueness and whatever.
@@ -517,7 +552,7 @@ function _configure_teap_saml_certs {
 
 	echo Authorize to KC
 	# SP - KEYCLOAK PART
-	keycloak_exec config credentials --server http://localhost:8080 --realm master --user "$ADMIN_USER" --password "$ADMIN_PASSWORD"
+	_keycloak_login
 
 	# SP - TEAP PART
 	# Be sure to disable assertions encryption and document signing.
@@ -559,13 +594,13 @@ function configure_saml_certs {
 	openssl req -x509 -sha256 -nodes -days 3650 -newkey rsa:2048 -batch -keyout "$sp_key" -out "$sp_cert"
 
 	# SP - KEYCLOAK PART
-	keycloak_exec config credentials --server http://localhost:8080 --realm master --user "$ADMIN_USER" --password "$ADMIN_PASSWORD"
+	_keycloak_login
 	# SP - NEXTCLOUD PART
 	DEFAULT_SAML_PROVIDER=1
 	client_id=$(_keycloak_client_id "$NEXTCLOUD_ROOT_URI/apps/user_saml/saml/metadata")
 	keycloak_exec update "clients/$client_id" -s 'attributes."saml.signing.certificate"='"$(cat "$sp_cert" | head -n -1 | tail -n +2)"
-	nextcloud_exec "saml:config:set" "--sp-x509cert" "$(cat "$sp_cert")" $DEFAULT_SAML_PROVIDER
-	nextcloud_exec "saml:config:set" "--sp-privateKey" "$(cat "$sp_key")" $DEFAULT_SAML_PROVIDER
+	nextcloud_exec_occ "saml:config:set" "--sp-x509cert" "$(cat "$sp_cert")" $DEFAULT_SAML_PROVIDER
+	nextcloud_exec_occ "saml:config:set" "--sp-privateKey" "$(cat "$sp_key")" $DEFAULT_SAML_PROVIDER
 
 	# SP - ROCKET PART
 	client_id=$(_keycloak_client_id "$ROCKETCHAT_ROOT_URI/_saml/metadata/keycloak")
@@ -594,7 +629,7 @@ function configure_saml_certs {
 	printf '%s\n' '-----END CERTIFICATE-----' >> "$idp_cert"
 
 	# IdP - NEXTCLOUD PART
-	nextcloud_exec "saml:config:set" "--idp-x509cert" "$(cat "$idp_cert")" $DEFAULT_SAML_PROVIDER
+	nextcloud_exec_occ "saml:config:set" "--idp-x509cert" "$(cat "$idp_cert")" $DEFAULT_SAML_PROVIDER
 
 	# IdP - ROCKET PART
 	# mongo_rocket_eval_update rocketchat_settings SAML_Custom_Default_cert "\"$keycloak_realm_cert\""
@@ -633,6 +668,7 @@ function mongo_rocket_eval_update {
 function configure_rocketchat {
 	# Init the mongo db
 	for i in $(seq 1 30); do
+		mongo_rocket_eval "rs.status()" > /dev/null && return
 		mongo_rocket_eval "rs.initiate({ _id: 'rs0', members: [ { _id: 0, host: 'localhost:27017' } ]})" && break || echo "Tried $i times. Waiting 5 secs..."
 		sleep 5
 	done
@@ -712,6 +748,42 @@ function prune_mongo_db {
 	# Do something like:
 	# db.rocketchat_sessions.deleteMany({ _updatedAt: { $lt: new ISODate("2024-01-01T00:00:00Z") } })
 	# db.rocketchat_statistics.deleteMany({ _updatedAt: { $lt: new ISODate("2024-01-01T00:00:00Z") } })
+}
+
+
+# $1: Ldif as string
+function ldap_modify {
+	docker-compose exec -T openldap ldapmodify -Q -Y EXTERNAL -H ldapi:///
+}
+
+
+function configure_ldap_acl {
+ldap_modify << EOF
+dn: olcDatabase={1}mdb,cn=config
+changetype: modify
+replace: olcAccess
+olcAccess: to attrs=cn,userPassword,givenName,sn,jpegPhoto
+  by self write
+  by dn="$ADMIN_DN" write
+  by * none break
+olcAccess: to dn.subtree="$ALL_PEOPLE_DN"
+  by dn="$MAINT_DN" read
+  by dn="$ADMIN_DN" write
+  by * none break
+olcAccess: to dn.subtree="$ACTIVE_PEOPLE_DN"
+  by dn="$READER_DN" read
+  by dn.one="$ACTIVE_PEOPLE_DN" read
+olcAccess: to dn="$READER_DN"
+  by anonymous auth
+olcAccess: to dn="$MAINT_DN"
+  by anonymous auth
+olcAccess: to *
+  by self read
+  by dn="$ADMIN_DN" write
+  by dn="$READER_DN" read
+  by dn="$MAINT_DN" read
+  by * none
+EOF
 }
 
 
