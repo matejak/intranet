@@ -10,6 +10,7 @@ ROCKETCHAT_HOSTNAME="${ROCKETCHAT_HOSTNAME:-rocket}"
 TEAP_HOSTNAME="${TEAP_HOSTNAME:-teap}"
 COLLABORA_HOSTNAME="${COLLABORA_HOSTNAME:-collabora}"
 KEYCLOAK_HOSTNAME="${KEYCLOAK_HOSTNAME:-sso}"
+BUREAU_HOSTNAME="${BUREAU_HOSTNAME:-bureau}"
 MAIL_SUBDOMAIN=mail
 
 MAIL_HOST=$DOMAINNAME
@@ -26,6 +27,7 @@ if test "$DOMAINNAME" = localhost; then
 	NEXTCLOUD_ROOT_URI=http://localhost:1181
 	ROCKETCHAT_ROOT_URI=http://localhost:1182
 	KEYCLOAK_ROOT_URI=http://localhost:1184
+	BUREAU_ROOT_URI=http://localhost:1185
 	COLLABORA_ROOT_URI=http://localhost:9999
 	TEAP_ROOT_URI=http://localhost:9999
 else
@@ -33,6 +35,7 @@ else
 	ROCKETCHAT_ROOT_URI=https://$ROCKETCHAT_HOSTNAME.$DOMAINNAME
 	COLLABORA_ROOT_URI=https://$COLLABORA_HOSTNAME.$DOMAINNAME
 	KEYCLOAK_ROOT_URI=https://$KEYCLOAK_HOSTNAME.$DOMAINNAME
+	BUREAU_ROOT_URI=https://$BUREAU_HOSTNAME.$DOMAINNAME
 	TEAP_ROOT_URI=https://$TEAP_HOSTNAME.$DOMAINNAME
 fi
 
@@ -261,18 +264,19 @@ LDAP_INDIRECT_CONFIGURATION["ldapAgentName"]=LDAP_READER_DN
 
 declare -A NEXT_SAML_CONFIGURATION
 NEXT_SAML_CONFIGURATION["general-uid_mapping"]="username"
-NEXT_SAML_CONFIGURATION["idp-entityId"]="$KEYCLOAK_ROOT_URI/auth/realms/master"
-NEXT_SAML_CONFIGURATION["idp-singleSignOnService.url"]="$KEYCLOAK_ROOT_URI/auth/realms/master/protocol/saml"
-NEXT_SAML_CONFIGURATION["type"]="saml"
+NEXT_SAML_CONFIGURATION["idp-entityId"]="$KEYCLOAK_ROOT_URI/realms/master"
+NEXT_SAML_CONFIGURATION["idp-singleSignOnService.url"]="$KEYCLOAK_ROOT_URI/realms/master/protocol/saml"
+# NEXT_SAML_CONFIGURATION["type"]="saml" ## deprecated
 NEXT_SAML_CONFIGURATION["general-idp0_display_name"]="SAMLLogin"
-NEXT_SAML_CONFIGURATION["general-allow_multiple_user_back_ends"]="1"
+# NEXT_SAML_CONFIGURATION["general-allow_multiple_user_back_ends"]="1"  ## deprecated
 
 # Service Provider certificate and key - That's us, Nextcloud
 NEXT_SAML_CONFIGURATION["sp-privateKey"]=""
 NEXT_SAML_CONFIGURATION["sp-x509cert"]=""
+NEXT_SAML_CONFIGURATION["sp-name-id-format"]=urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress
 
 NEXT_SAML_CONFIGURATION["saml-attribute-mapping-email_mapping"]=""
-NEXT_SAML_CONFIGURATION["idp-singleLogoutService.url"]="$KEYCLOAK_ROOT_URI/auth/realms/master/protocol/saml"
+NEXT_SAML_CONFIGURATION["idp-singleLogoutService.url"]="$KEYCLOAK_ROOT_URI/realms/master/protocol/saml"
 NEXT_SAML_CONFIGURATION["security-authnRequestsSigned"]="1"
 NEXT_SAML_CONFIGURATION["security-logoutRequestSigned"]="1"
 NEXT_SAML_CONFIGURATION["security-logoutResponseSigned"]="1"
@@ -392,10 +396,10 @@ MONGO_SAML[Custom_Default_button_color]='"#1d74f5"'
 MONGO_SAML[Custom_Default_button_label_color]='"#FFFFFF"'
 MONGO_SAML[Custom_Default_button_label_text]='"SAML login"'
 MONGO_SAML[Custom_Default_debug]='true'
-MONGO_SAML[Custom_Default_entry_point]="\"$KEYCLOAK_ROOT_URI/auth/realms/master/protocol/saml\""
+MONGO_SAML[Custom_Default_entry_point]="\"$KEYCLOAK_ROOT_URI/realms/master/protocol/saml\""
 MONGO_SAML[Custom_Default_generate_username]='false'
-MONGO_SAML[Custom_Default_idp_slo_redirect_url]="\"$KEYCLOAK_ROOT_URI/auth/realms/master/protocol/saml\""
-MONGO_SAML[Custom_Default_issuer]="\"https://$ROCKETCHAT_HOSTNAME.$DOMAINNAME/_saml/metadata/keycloak"\"
+MONGO_SAML[Custom_Default_idp_slo_redirect_url]="\"$KEYCLOAK_ROOT_URI/realms/master/protocol/saml\""
+MONGO_SAML[Custom_Default_issuer]="\"$ROCKETCHAT_ROOT_URI/_saml/metadata/keycloak"\"
 MONGO_SAML[Custom_Default_logout_behaviour]='"SAML"'
 MONGO_SAML[Custom_Default_mail_overwrite]='false'
 MONGO_SAML[Custom_Default_name_overwrite]='false'
@@ -429,12 +433,6 @@ function nextcloud_exec_occ_set_ldap_indirect {
 
 function keycloak_exec {
 	docker-compose exec keycloak '/opt/keycloak/bin/kcadm.sh' "$@"
-}
-
-
-function keycloak_create_saml_client {
-	true
-	# See also: https://stackoverflow.com/questions/53662807/configuring-keycloak-saml-from-the-command-line
 }
 
 
@@ -521,8 +519,38 @@ function configure_nextcloud_saml_except_certs {
 }
 
 
+function configure_nextcloud_saml_certs {
+	DEFAULT_SAML_PROVIDER=1
+	_keycloak_login
+	inline_idp_cert="$(get_idp_cert)"
+	nextcloud_exec_occ "saml:config:set" "--idp-x509cert=$inline_idp_cert" -- $DEFAULT_SAML_PROVIDER
+
+	certdir="$(generate_rsa_certs next)"
+	inline_sp_cert="$(cat "$certdir/service.cert")"
+	inline_sp_key="$(cat "$certdir/service.key")"
+	rm -rf "$certdir"
+	internal_client_id=$(_keycloak_client_id "$NEXTCLOUD_ROOT_URI/apps/user_saml/saml/metadata")
+	keycloak_update_client "$internal_client_id" 'attributes."saml.signing.certificate"='"$(head -n -1 <<< "$inline_sp_cert" | tail -n +2)"
+	nextcloud_exec_occ "saml:config:set" "--sp-x509cert=$inline_sp_cert" $DEFAULT_SAML_PROVIDER
+	nextcloud_exec_occ "saml:config:set" "--sp-privateKey=$inline_sp_key" $DEFAULT_SAML_PROVIDER
+}
+
+
 function _keycloak_login {
 	keycloak_exec config credentials --server http://localhost:8080 --realm master --user "$ADMIN_USER" --password "$ADMIN_PASSWORD" &> /dev/null
+}
+
+
+# $1: The client ID
+# Rest: Update Arguments without -s
+function keycloak_update_client {
+	local _client_id="$1"
+	local _args=()
+	shift
+	for arg in "$@"; do
+		_args+=(-s "$arg")
+	done
+	keycloak_exec update "clients/$_client_id" --realm master "${_args[@]}"
 }
 
 
@@ -532,15 +560,45 @@ function _keycloak_client_id {
 }
 
 
+function configure_keycloak_rocketchat {
+	_keycloak_login
+	client_id="$ROCKETCHAT_ROOT_URI/_saml/metadata/keycloak"
+	internal_client_id=$(_keycloak_client_id "$client_id")
+	if test "$internal_client_id" = null; then
+		keycloak_exec create clients -r master -s "clientId=$client_id" -s protocol=saml -s enabled=true
+		internal_client_id=$(_keycloak_client_id "$client_id")
+	fi
+	# Get list of existing config:
+	# keycloak_exec get "clients/$internal_client_id" --realm master
+	keycloak_update_client "$internal_client_id" "name=Rocket.chat" "redirectUris=[\"$ROCKETCHAT_ROOT_URI/_saml/validate/keycloak\"]"
+}
+
+
 function configure_keycloak_next {
 	_keycloak_login
-	client_id="$NEXTCLOUD_ROOT_URI/index.php/apps/user_saml/saml/metadata"
-	existing_client_id=$(_keycloak_client_id "$client_id")
-	if test "$existing_client_id" = null; then
+	client_id="$NEXTCLOUD_ROOT_URI/apps/user_saml/saml/metadata"
+	internal_client_id=$(_keycloak_client_id "$client_id")
+	if test "$internal_client_id" = null; then
 		keycloak_exec create clients -r master -s "clientId=$client_id" -s protocol=saml -s enabled=true
+		internal_client_id=$(_keycloak_client_id "$client_id")
 	fi
-	# TODO: Create the Nextcloud client by downloading its SAML metadata and supplying it to the API
-	# TODO: get the mappings, set mappings and uniqueness and whatever.
+	# Get list of existing config:
+	# keycloak_exec get "clients/$internal_client_id" --realm master
+	keycloak_update_client "$internal_client_id" "name=Nextcloud" "redirectUris=[\"$NEXTCLOUD_ROOT_URI/apps/user_saml/saml/acs\"]"
+}
+
+
+function configure_keycloak_bureau {
+	_keycloak_login
+	client_id="$BUREAU_ROOT_URI/login/saml/metadata"
+	internal_client_id=$(_keycloak_client_id "$client_id")
+	if test "$internal_client_id" = null; then
+		keycloak_exec create clients -r master -s "clientId=$client_id" -s protocol=saml -s enabled=true
+		internal_client_id=$(_keycloak_client_id "$client_id")
+	fi
+	# Get list of existing config:
+	# keycloak_exec get "clients/$internal_client_id" --realm master
+	keycloak_update_client "$internal_client_id" "name=Bureau" "redirectUris=[\"$BUREAU_ROOT_URI/login/saml/acs\"]"
 }
 
 
@@ -586,6 +644,24 @@ function _configure_teap_saml_certs {
 	rm -f "$idp_cert"
 	rm -rf "$tmp_dir"
 }
+
+
+function get_idp_cert {
+	keycloak_realm_cert=$(keycloak_exec get realms/master/keys -F 'keys(certificate)' | jq -M --raw-output 'flatten|add.certificate')
+	inline_idp_cert="-----BEGIN CERTIFICATE-----\n${keycloak_realm_cert}\n-----END CERTIFICATE-----\n"
+	printf -- "$inline_idp_cert"
+}
+
+
+# $1 prefix
+function generate_rsa_certs {
+	tmp_dir=$(mktemp -d -t certs-$1-XXXXXX)
+	sp_cert="$tmp_dir/service.cert"
+	sp_key="$tmp_dir/service.key"
+	openssl req -x509 -sha256 -nodes -days 3650 -newkey rsa:2048 -batch -keyout "$sp_key" -out "$sp_cert"
+	printf '%s' "$tmp_dir"
+}
+
 
 function configure_saml_certs {
 	tmp_dir=$(mktemp -d -t certs-XXXXXX)
@@ -658,7 +734,7 @@ function mongo_rocket_eval {
 # $2: id
 # $3: value
 function mongo_rocket_eval_update {
-	mongo_rocket_eval "db.$1.update({\"_id\": \"$2\"}, {\
+	mongo_rocket_eval "db.$1.updateOne({\"_id\": \"$2\"}, {\
 	       \$currentDate: { \"_updatedAt\": true},\
 	       \$set: { \"value\": $3}\
 	})"
@@ -688,6 +764,23 @@ function configure_rocketchat_saml_except_certs {
 		grep -q 'private_key' <<< $item && continue
 		mongo_rocket_eval_update rocketchat_settings "SAML_$item" "${MONGO_SAML[$item]}"
 	done
+}
+
+
+function configure_rocketchat_saml_certs {
+	DEFAULT_SAML_PROVIDER=1
+	_keycloak_login
+	inline_idp_cert="$(get_idp_cert)"
+	mongo_rocket_eval_update rocketchat_settings "SAML_Custom_Default_cert" "\"$(escape_newlines "$inline_sp_cert")\""
+
+	certdir="$(generate_rsa_certs rocket)"
+	inline_sp_cert="$(cat "$certdir/service.cert")"
+	inline_sp_key="$(cat "$certdir/service.key")"
+	rm -rf "$certdir"
+	mongo_rocket_eval_update rocketchat_settings "SAML_Custom_Default_public_cert" "\"$(escape_newlines "$inline_sp_cert")\""
+	mongo_rocket_eval_update rocketchat_settings "SAML_Custom_Default_private_key" "\"$(escape_newlines "$inline_sp_key")\""
+	internal_client_id=$(_keycloak_client_id "$ROCKETCHAT_ROOT_URI/_saml/metadata/keycloak")
+	keycloak_update_client "$internal_client_id" 'attributes."saml.signing.certificate"='"$(head -n -1 <<< "$inline_sp_cert" | tail -n +2)"
 }
 
 
@@ -784,6 +877,87 @@ olcAccess: to *
   by dn="$MAINT_DN" read
   by * none
 EOF
+}
+
+
+# $1: filename
+# $2: edit-expression
+function _edit_json {
+	local _tmpfile=/tmp/json-edit
+	jq "$2" "$1" > $_tmpfile && mv $_tmpfile "$1"
+	rm -f $_tmpfile
+}
+
+
+function configure_bureau_saml_except_certs {
+	DATADIR=data
+cat > "$DATADIR/bureau/settings.json" << EOF
+{
+    "strict": true,
+    "debug": false,
+    "sp": {
+        "entityId": "$BUREAU_ROOT_URI/login/saml/metadata",
+        "assertionConsumerService": {
+            "url": "$BUREAU_ROOT_URI/login/saml/acs",
+            "binding": "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST"
+        },
+        "singleLogoutService": {
+            "url": "$BUREAU_ROOT_URI/login/saml/sls",
+            "binding": "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect"
+        },
+        "NameIDFormat": "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress",
+        "x509cert": "",
+        "privateKey": ""
+    },
+    "idp": {
+        "entityId": "$KEYCLOAK_ROOT_URI/realms/master",
+        "singleSignOnService": {
+            "url": "$KEYCLOAK_ROOT_URI/realms/master/protocol/saml",
+            "binding": "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect"
+        },
+        "singleLogoutService": {
+            "url": "$KEYCLOAK_ROOT_URI/realms/master/protocol/saml",
+            "binding": "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect"
+        },
+        "x509cert": ""
+    },
+    "security": {
+        "nameIdEncrypted": false,
+        "authnRequestsSigned": true,
+        "logoutRequestSigned": true,
+        "logoutResponseSigned": true,
+        "signMetadata": false,
+        "wantMessagesSigned": true,
+        "wantAssertionsSigned": true,
+        "wantNameId" : true,
+        "wantNameIdEncrypted": false,
+        "wantAssertionsEncrypted": false,
+        "allowSingleLabelDomains": false,
+        "signatureAlgorithm": "http://www.w3.org/2001/04/xmldsig-more#rsa-sha256",
+        "digestAlgorithm": "http://www.w3.org/2001/04/xmlenc#sha256",
+        "rejectDeprecatedAlgorithm": true
+    }
+}
+EOF
+}
+
+
+function configure_bureau_saml_certs {
+	DATADIR=data
+	local _bureau_config="$DATADIR/bureau/settings.json"
+
+	_keycloak_login
+	pure_inline_idp_cert="$(get_idp_cert | head -n -1 | tail -n +2)"
+	_edit_json "$_bureau_config" ".idp.x509cert = \"$pure_inline_idp_cert\""
+
+	certdir="$(generate_rsa_certs bureau)"
+	pure_inline_sp_cert="$(head -n -1 "$certdir/service.cert" | tail -n +2)"
+	pure_inline_sp_key="$(head -n -1 "$certdir/service.key" | tail -n +2)"
+	rm -rf "$certdir"
+	internal_client_id=$(_keycloak_client_id "$BUREAU_ROOT_URI/login/saml/metadata")
+	keycloak_update_client "$internal_client_id" 'attributes."saml.signing.certificate"='"$pure_inline_sp_cert"
+	_edit_json "$_bureau_config" ".sp.x509cert = \"$pure_inline_sp_cert\""
+	_edit_json "$_bureau_config" ".sp.privateKey = \"$pure_inline_sp_key\""
 }
 
 
