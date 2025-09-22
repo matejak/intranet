@@ -11,6 +11,7 @@ TEAP_HOSTNAME="${TEAP_HOSTNAME:-teap}"
 COLLABORA_HOSTNAME="${COLLABORA_HOSTNAME:-collabora}"
 KEYCLOAK_HOSTNAME="${KEYCLOAK_HOSTNAME:-sso}"
 BUREAU_HOSTNAME="${BUREAU_HOSTNAME:-bureau}"
+REDMINE_HOSTNAME="${REDMINE_HOSTNAME:-project}"
 MAIL_SUBDOMAIN=mail
 
 MAIL_HOST=$DOMAINNAME
@@ -21,6 +22,8 @@ IMAP_HOSTNAME=imap.$MAIL_HOST
 SMTP_HOSTNAME=smtp.$MAIL_HOST
 
 LOCAL_SETUP="${LOCAL_SETUP:-no}"
+
+KCADM_PATH=/opt/keycloak/bin/kcadm.sh
 # yes if we are testing things locally, i.e. without a real domain
 if test "$DOMAINNAME" = localhost; then
 	LOCAL_SETUP=yes
@@ -28,6 +31,7 @@ if test "$DOMAINNAME" = localhost; then
 	ROCKETCHAT_ROOT_URI=http://localhost:1182
 	KEYCLOAK_ROOT_URI=http://localhost:1184
 	BUREAU_ROOT_URI=http://localhost:1185
+	REDMINE_ROOT_URI=http://localhost:1186
 	COLLABORA_ROOT_URI=http://localhost:9999
 	TEAP_ROOT_URI=http://localhost:9999
 else
@@ -36,27 +40,32 @@ else
 	COLLABORA_ROOT_URI=https://$COLLABORA_HOSTNAME.$DOMAINNAME
 	KEYCLOAK_ROOT_URI=https://$KEYCLOAK_HOSTNAME.$DOMAINNAME
 	BUREAU_ROOT_URI=https://$BUREAU_HOSTNAME.$DOMAINNAME
+	REDMINE_ROOT_URI=https://$REDMINE_HOSTNAME.$DOMAINNAME
 	TEAP_ROOT_URI=https://$TEAP_HOSTNAME.$DOMAINNAME
 fi
+NEXTCLOUD_SAML_ROOT=$NEXTCLOUD_ROOT_URI/apps/user_saml/saml
+BUREAU_SAML_ROOT=$BUREAU_ROOT_URI/login/saml
+REDMINE_SAML_ROOT=$REDMINE_ROOT_URI/auth/saml
+KEYCLOAK_MASTER_ROOT=$KEYCLOAK_ROOT_URI/realms/master
+KEYCLOAK_SAML_ROOT=$KEYCLOAK_MASTER_ROOT/protocol/saml
 
 
+# Helper function, useful for connecting to postgres DBs right away
 # $1: db host stem
 function db_admin {
 	docker-compose exec "db-$1" bash -c 'psql -U "$POSTGRES_USER" "$POSTGRES_DB"'
 }
 
 
-function define_domain_components {
-	local IFS='.'
-	DOMAIN_COMPONENTS=()
-	for dc in $DOMAINNAME; do
-		DOMAIN_COMPONENTS+=("$dc")
-	done
+function escape_newlines {
+	awk '{printf "%s\\n", $0}' <<< "$1" | sed -e 's/\\n$//'  # Remove the trailing '\n'
 }
 
 
-function escape_newlines {
-	awk '{printf "%s\\n", $0}' <<< "$1" | sed -e 's/\\n$//'  # Remove the trailing '\n'
+# $1: What ID string to query, e.g. "Something" (quote the quotes) or /Something/
+function _mongo_query_settings_ids {
+	mongo_rocket_eval "db.rocketchat_settings.find({ _id: $1 }, {\"id\": 1}).toArray()"
+	# mongo_rocket_eval "db.rocketchat_settings.find({ _id: $1 }, {\"id\": 1, \"value\": 1}).toArray()"
 }
 
 
@@ -177,9 +186,9 @@ function dovecot_share_inbox {
 }
 
 
-define_domain_components
-# Requires Bash 4.4 or something.
-# readarray -d . -t DOMAIN_COMPONENTS <<< "$DOMAINNAME"
+# Not using <<< because of introduction of a problematic newline
+# https://stackoverflow.com/questions/77675639/how-do-i-prevent-readarray-from-adding-a-newline-to-the-array
+readarray -d . DOMAIN_COMPONENTS < <(printf "%s" "$DOMAINNAME")
 LDAP_BASE_DN=
 for dc in "${DOMAIN_COMPONENTS[@]}"; do
 	LDAP_BASE_DN="${LDAP_BASE_DN}dc=$dc,"
@@ -194,7 +203,6 @@ ACTIVE_PEOPLE_DN="ou=active,$ALL_PEOPLE_DN"
 
 
 declare -A FS_OWNERSHIP
-
 FS_OWNERSHIP["mail,/var/mail"]=docker:docker
 FS_OWNERSHIP["next,/var/www"]=www-data:www-data
 FS_OWNERSHIP["db-next,/var/lib/postgresql/data"]=postgres:postgres
@@ -220,52 +228,66 @@ function settle_fs_ownership {
 	done
 }
 
-declare -A LDAP_CONFIGURATION
-LDAP_CONFIGURATION["lastJpegPhotoLookup"]="0"
-LDAP_CONFIGURATION["ldapAttributesForGroupSearch"]="cn;description"
-LDAP_CONFIGURATION["ldapBase"]="$LDAP_BASE_DN"
-LDAP_CONFIGURATION["ldapBaseGroups"]="$LDAP_BASE_DN"
-LDAP_CONFIGURATION["ldapBaseUsers"]="$ACTIVE_PEOPLE_DN"
-LDAP_CONFIGURATION["ldapCacheTTL"]="600"
-LDAP_CONFIGURATION["ldapConfigurationActive"]="1"
-LDAP_CONFIGURATION["ldapEmailAttribute"]="mail"
-LDAP_CONFIGURATION["ldapExperiencedAdmin"]="0"
-LDAP_CONFIGURATION["ldapExpertUsernameAttr"]="uid"
-LDAP_CONFIGURATION["ldapGidNumber"]="gidNumber"
-LDAP_CONFIGURATION["ldapGroupDisplayName"]="description"
-LDAP_CONFIGURATION["ldapGroupFilter"]="(&(|(objectclass=posixGroup)))"
-LDAP_CONFIGURATION["ldapGroupFilterMode"]="1"
-LDAP_CONFIGURATION["ldapGroupMemberAssocAttr"]="memberUid"
-LDAP_CONFIGURATION["ldapHost"]="ldap"
-LDAP_CONFIGURATION["ldapLoginFilter"]="(&(|(objectclass=inetOrgPerson))(uid=%uid))"
-LDAP_CONFIGURATION["ldapLoginFilterEmail"]="0"
-LDAP_CONFIGURATION["ldapLoginFilterMode"]="0"
-LDAP_CONFIGURATION["ldapLoginFilterUsername"]="1"
-LDAP_CONFIGURATION["ldapNestedGroups"]="0"
-LDAP_CONFIGURATION["ldapPagingSize"]="500"
-LDAP_CONFIGURATION["ldapPort"]="389"
-LDAP_CONFIGURATION["ldapTLS"]="0"
-LDAP_CONFIGURATION["ldapUserAvatarRule"]="default"
-LDAP_CONFIGURATION["ldapUserDisplayName"]="cn"
-LDAP_CONFIGURATION["ldapUserFilter"]="(|(objectclass=inetOrgPerson))"
-LDAP_CONFIGURATION["ldapUserFilterMode"]="0"
-LDAP_CONFIGURATION["ldapUserFilterObjectclass"]="inetOrgPerson"
-LDAP_CONFIGURATION["ldapUuidGroupAttribute"]="auto"
-LDAP_CONFIGURATION["ldapUuidUserAttribute"]="auto"
-LDAP_CONFIGURATION["turnOffCertCheck"]="0"
-LDAP_CONFIGURATION["turnOnPasswordChange"]="0"
-LDAP_CONFIGURATION["useMemberOfToDetectMembership"]="1"
+declare -A NEXT_LDAP_CONFIGURATION
+NEXT_LDAP_CONFIGURATION["lastJpegPhotoLookup"]="0"
+NEXT_LDAP_CONFIGURATION["ldapAttributesForGroupSearch"]="cn;description"
+NEXT_LDAP_CONFIGURATION["ldapBase"]="$LDAP_BASE_DN"
+NEXT_LDAP_CONFIGURATION["ldapBaseGroups"]="$LDAP_BASE_DN"
+NEXT_LDAP_CONFIGURATION["ldapBaseUsers"]="$ACTIVE_PEOPLE_DN"
+NEXT_LDAP_CONFIGURATION["ldapCacheTTL"]="600"
+NEXT_LDAP_CONFIGURATION["ldapConfigurationActive"]="1"
+NEXT_LDAP_CONFIGURATION["ldapEmailAttribute"]="mail"
+NEXT_LDAP_CONFIGURATION["ldapExperiencedAdmin"]="0"
+NEXT_LDAP_CONFIGURATION["ldapExpertUsernameAttr"]="uid"
+NEXT_LDAP_CONFIGURATION["ldapGidNumber"]="gidNumber"
+NEXT_LDAP_CONFIGURATION["ldapGroupDisplayName"]="description"
+NEXT_LDAP_CONFIGURATION["ldapGroupFilter"]="(&(|(objectclass=posixGroup)))"
+NEXT_LDAP_CONFIGURATION["ldapGroupFilterMode"]="1"
+NEXT_LDAP_CONFIGURATION["ldapGroupMemberAssocAttr"]="memberUid"
+NEXT_LDAP_CONFIGURATION["ldapHost"]="ldap"
+NEXT_LDAP_CONFIGURATION["ldapLoginFilter"]="(&(|(objectclass=inetOrgPerson))(uid=%uid))"
+NEXT_LDAP_CONFIGURATION["ldapLoginFilterEmail"]="0"
+NEXT_LDAP_CONFIGURATION["ldapLoginFilterMode"]="0"
+NEXT_LDAP_CONFIGURATION["ldapLoginFilterUsername"]="1"
+NEXT_LDAP_CONFIGURATION["ldapNestedGroups"]="0"
+NEXT_LDAP_CONFIGURATION["ldapPagingSize"]="500"
+NEXT_LDAP_CONFIGURATION["ldapPort"]="389"
+NEXT_LDAP_CONFIGURATION["ldapTLS"]="0"
+NEXT_LDAP_CONFIGURATION["ldapUserAvatarRule"]="default"
+NEXT_LDAP_CONFIGURATION["ldapUserDisplayName"]="cn"
+NEXT_LDAP_CONFIGURATION["ldapUserFilter"]="(|(objectclass=inetOrgPerson))"
+NEXT_LDAP_CONFIGURATION["ldapUserFilterMode"]="0"
+NEXT_LDAP_CONFIGURATION["ldapUserFilterObjectclass"]="inetOrgPerson"
+NEXT_LDAP_CONFIGURATION["ldapUuidGroupAttribute"]="auto"
+NEXT_LDAP_CONFIGURATION["ldapUuidUserAttribute"]="auto"
+NEXT_LDAP_CONFIGURATION["turnOffCertCheck"]="0"
+NEXT_LDAP_CONFIGURATION["turnOnPasswordChange"]="0"
+NEXT_LDAP_CONFIGURATION["useMemberOfToDetectMembership"]="1"
 
 
-declare -A LDAP_INDIRECT_CONFIGURATION
-LDAP_INDIRECT_CONFIGURATION["ldapAgentPassword"]=LDAP_READER_PASSWORD
-LDAP_INDIRECT_CONFIGURATION["ldapAgentName"]=LDAP_READER_DN
+declare -A KEYCLOAK_LDAP_CONFIGURATION
+KEYCLOAK_LDAP_CONFIGURATION['startTls']='"false"'
+KEYCLOAK_LDAP_CONFIGURATION['usersDn']="\"$ACTIVE_PEOPLE_DN\""
+KEYCLOAK_LDAP_CONFIGURATION['enabled']='"true"'
+KEYCLOAK_LDAP_CONFIGURATION['usernameLDAPAttribute']="\"${NEXT_LDAP_CONFIGURATION["ldapExpertUsernameAttr"]}\""
+KEYCLOAK_LDAP_CONFIGURATION['uuidLDAPAttribute']='"entryUUID"'
+KEYCLOAK_LDAP_CONFIGURATION['connectionUrl']='"ldap://ldap"'
+KEYCLOAK_LDAP_CONFIGURATION['trustEmail']='"true"'
+KEYCLOAK_LDAP_CONFIGURATION['userObjectClasses']='"inetOrgPerson", "organizationalPerson"'
+KEYCLOAK_LDAP_CONFIGURATION['bindDn']="\"$READER_DN\""
 
 
+# Configuration when config values are known only in the container as env variables
+declare -A NEXT_LDAP_INDIRECT_CONFIGURATION
+NEXT_LDAP_INDIRECT_CONFIGURATION["ldapAgentPassword"]=LDAP_READER_PASSWORD
+NEXT_LDAP_INDIRECT_CONFIGURATION["ldapAgentName"]=LDAP_READER_DN
+
+
+# Unknown how to turn SAML on
 declare -A NEXT_SAML_CONFIGURATION
 NEXT_SAML_CONFIGURATION["general-uid_mapping"]="username"
-NEXT_SAML_CONFIGURATION["idp-entityId"]="$KEYCLOAK_ROOT_URI/realms/master"
-NEXT_SAML_CONFIGURATION["idp-singleSignOnService.url"]="$KEYCLOAK_ROOT_URI/realms/master/protocol/saml"
+NEXT_SAML_CONFIGURATION["idp-entityId"]="$KEYCLOAK_MASTER_ROOT"
+NEXT_SAML_CONFIGURATION["idp-singleSignOnService.url"]="$KEYCLOAK_SAML_ROOT"
 # NEXT_SAML_CONFIGURATION["type"]="saml" ## deprecated
 NEXT_SAML_CONFIGURATION["general-idp0_display_name"]="SAMLLogin"
 # NEXT_SAML_CONFIGURATION["general-allow_multiple_user_back_ends"]="1"  ## deprecated
@@ -276,7 +298,7 @@ NEXT_SAML_CONFIGURATION["sp-x509cert"]=""
 NEXT_SAML_CONFIGURATION["sp-name-id-format"]=urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress
 
 NEXT_SAML_CONFIGURATION["saml-attribute-mapping-email_mapping"]=""
-NEXT_SAML_CONFIGURATION["idp-singleLogoutService.url"]="$KEYCLOAK_ROOT_URI/realms/master/protocol/saml"
+NEXT_SAML_CONFIGURATION["idp-singleLogoutService.url"]="$KEYCLOAK_SAML_ROOT"
 NEXT_SAML_CONFIGURATION["security-authnRequestsSigned"]="1"
 NEXT_SAML_CONFIGURATION["security-logoutRequestSigned"]="1"
 NEXT_SAML_CONFIGURATION["security-logoutResponseSigned"]="1"
@@ -300,6 +322,7 @@ CALENDAR_CONFIGURATION["sendInvitations"]="yes"
 CALENDAR_CONFIGURATION["sendEventReminders"]="yes"
 
 
+# Nextcloud mail may be quite rusty
 declare -A MAIL_DEFAULTS
 MAIL_DEFAULTS["email"]="%USERID%@$MAIL_HOST"
 MAIL_DEFAULTS["imapHost"]="$IMAP_HOSTNAME"
@@ -318,72 +341,28 @@ MAIL_INT_CONFIGURATION["smtp.timeout"]=6
 MAIL_INT_CONFIGURATION["verify-tls-peer"]=0
 
 
-declare -A DIVISIONS
-DIVISIONS['edu']='Education'
-DIVISIONS['fin']='Finance'
-DIVISIONS['hra']='HR-and-Admin'
-DIVISIONS['it']='IT'
-DIVISIONS['leg']='Legal'
-DIVISIONS['lgc']='Legacy'
-DIVISIONS['lng']='Language'
-DIVISIONS['mar']='Marketing'
-DIVISIONS['pub']='Publishing'
-DIVISIONS['res']='Research'
-
-DIVISIONS_CHANNEL_MAP=""
-for code in "${!DIVISIONS[@]}"; do
-	value="${DIVISIONS[$code]}"
-	DIVISIONS_CHANNEL_MAP="${DIVISIONS_CHANNEL_MAP}\\t\\\"${code}\\\": \\\"Division-${value}\\\",\\n"
-done
-
-
 declare -A MONGO_LDAP
 MONGO_LDAP[Authentication]='true'
 MONGO_LDAP[Authentication_Password]="\"$ADMIN_PASSWORD\""
 MONGO_LDAP[Authentication_UserDN]="\"$ADMIN_DN\""
-MONGO_LDAP[Background_Sync]='true'
-MONGO_LDAP[Background_Sync_Import_New_Users]='true'
-MONGO_LDAP[Background_Sync_Interval]='"Every 2 hours"'
-MONGO_LDAP[Background_Sync_Keep_Existant_Users_Updated]='true'
 MONGO_LDAP[BaseDN]="\"$ACTIVE_PEOPLE_DN\""
-MONGO_LDAP[CA_Cert]='""'
-MONGO_LDAP[Connect_Timeout]='1000'
 MONGO_LDAP[Default_Domain]="\"$DOMAINNAME\""
+MONGO_LDAP[Email_Field]='"mail"'
 MONGO_LDAP[Enable]='true'
 MONGO_LDAP[Encryption]='"plain"'
 MONGO_LDAP[Find_User_After_Login]='true'
 MONGO_LDAP[Group_Filter_Enable]='false'
-MONGO_LDAP[Group_Filter_Group_Id_Attribute]='"cn"'
-MONGO_LDAP[Group_Filter_Group_Member_Attribute]='"uniqueMember"'
-MONGO_LDAP[Group_Filter_Group_Member_Format]='"uniqueMember"'
-MONGO_LDAP[Group_Filter_Group_Name]='"ROCKET_CHAT"'
-MONGO_LDAP[Group_Filter_ObjectClass]='"posixGroup"'
 MONGO_LDAP[Host]='"ldap"'
-MONGO_LDAP[Idle_Timeout]='1000'
-MONGO_LDAP[Internal_Log_Level]='"disabled"'
 MONGO_LDAP[Login_Fallback]='true'
 MONGO_LDAP[Merge_Existing_Users]='true'
 MONGO_LDAP[Port]='"389"'
 MONGO_LDAP[Reconnect]='true'
 MONGO_LDAP[Reject_Unauthorized]='true'
-MONGO_LDAP[Search_Page_Size]='250'
-MONGO_LDAP[Search_Size_Limit]='5000'
-# MONGO_LDAP[Sync_Now]='"ldap_sync_now"'
 MONGO_LDAP[Sync_User_Avatar]='true'
-MONGO_LDAP[Sync_User_Data]='true'
-MONGO_LDAP[Sync_User_Data_FieldMap]='"{\"cn\":\"name\", \"mail\":\"email\"}"'
-MONGO_LDAP[Sync_User_Data_Groups]='true'
-MONGO_LDAP[Sync_User_Data_GroupsMap]='"{\n\t\"it\": \"it\"\n\t,\"admins\": \"admin\"\n}"'
-MONGO_LDAP[Sync_User_Data_Groups_AutoChannels]='true'
-MONGO_LDAP[Sync_User_Data_Groups_AutoChannelsMap]="\"{\\n${DIVISIONS_CHANNEL_MAP}\\t\\\"everybody\\\": \\\"general\\\"\\n}\""
-MONGO_LDAP[Sync_User_Data_Groups_AutoChannels_Admin]='"rocket.cat"'
-MONGO_LDAP[Sync_User_Data_Groups_AutoRemove]='false'
-MONGO_LDAP[Sync_User_Data_Groups_BaseDN]="\"ou=divisions,$LDAP_BASE_DN\""
-MONGO_LDAP[Sync_User_Data_Groups_Enforce_AutoChannels]='false'
-MONGO_LDAP[Sync_User_Data_Groups_Filter]='"(&(cn=#{groupName})(memberUid=#{username}))"'
-# MONGO_LDAP[Test_Connection]='"ldap_test_connection"'
 MONGO_LDAP[Timeout]='600'
 MONGO_LDAP[Unique_Identifier_Field]='"uid"'
+# vvv Probably right value, but we have started with uid vvv
+# MONGO_LDAP[Unique_Identifier_Field]='"entryUUID"'
 MONGO_LDAP[User_Search_Field]='"uid"'
 MONGO_LDAP[User_Search_Filter]='"(objectclass=inetOrgPerson)"'
 MONGO_LDAP[User_Search_Scope]='"sub"'
@@ -396,22 +375,36 @@ MONGO_SAML[Custom_Default_button_color]='"#1d74f5"'
 MONGO_SAML[Custom_Default_button_label_color]='"#FFFFFF"'
 MONGO_SAML[Custom_Default_button_label_text]='"SAML login"'
 MONGO_SAML[Custom_Default_debug]='true'
-MONGO_SAML[Custom_Default_entry_point]="\"$KEYCLOAK_ROOT_URI/realms/master/protocol/saml\""
+MONGO_SAML[Custom_Default_entry_point]="\"$KEYCLOAK_SAML_ROOT\""
 MONGO_SAML[Custom_Default_generate_username]='false'
-MONGO_SAML[Custom_Default_idp_slo_redirect_url]="\"$KEYCLOAK_ROOT_URI/realms/master/protocol/saml\""
+MONGO_SAML[Custom_Default_idp_slo_redirect_url]="\"$KEYCLOAK_SAML_ROOT\""
 MONGO_SAML[Custom_Default_issuer]="\"$ROCKETCHAT_ROOT_URI/_saml/metadata/keycloak"\"
 MONGO_SAML[Custom_Default_logout_behaviour]='"SAML"'
 MONGO_SAML[Custom_Default_mail_overwrite]='false'
 MONGO_SAML[Custom_Default_name_overwrite]='false'
 MONGO_SAML[Custom_Default_provider]='"keycloak"'
-# Probably the IP's key
+# The IdP's key
 MONGO_SAML[Custom_Default_cert]=''
 MONGO_SAML[Custom_Default_private_key]=''
 MONGO_SAML[Custom_Default_public_cert]=''
 
-# TODO: MONGO_ACCOUNTS
-# Don't allow changes of whatever to accounts
-# Don't allow registrations
+# Populate using mongo_rocket_eval 'db.rocketchat_settings.find({ _id: /Accounts_/ }, {"id": 1}).pretty()'
+declare -A MONGO_ACCOUNTS
+MONGO_ACCOUNTS[AllowDeleteOwnAccount]=false
+MONGO_ACCOUNTS[AllowEmailChange]=false
+MONGO_ACCOUNTS[AllowPasswordChange]=false
+MONGO_ACCOUNTS[AllowPasswordChangeForOAuthUsers]=false
+MONGO_ACCOUNTS[AllowRealNameChange]=false
+MONGO_ACCOUNTS[AllowUserAvatarChange]=false
+MONGO_ACCOUNTS[AllowUserProfileChange]=false
+MONGO_ACCOUNTS[AllowUsernameChange]=false
+MONGO_ACCOUNTS[AllowEmailChange]=false
+MONGO_ACCOUNTS[TwoFactorAuthentication_Enabled]=false
+# Display unread content on the top
+MONGO_ACCOUNTS[Default_User_Preferences_sidebarShowUnread]=true
+# No self-registration allowed
+MONGO_ACCOUNTS[RegistrationForm]='"Disabled"'
+
 
 function nextcloud_exec {
 	docker-compose exec --user www-data "$NEXTCLOUD_HOSTNAME" "$@"
@@ -423,6 +416,7 @@ function nextcloud_exec_occ {
 }
 
 
+# Useful for sensitive data, hardwiredfor nextcloud ldap stuff
 # $1: LDAP Config ID
 # $2: Configuration key
 # $3: Variable holding value
@@ -431,39 +425,87 @@ function nextcloud_exec_occ_set_ldap_indirect {
 }
 
 
-function keycloak_exec {
-	docker-compose exec keycloak '/opt/keycloak/bin/kcadm.sh' "$@"
+function bureau_exec_flask {
+	docker-compose exec bureau flask "$@"
 }
 
 
-function apps_enable {
-	for app in "$@"; do
-		nextcloud_exec_occ "app:install" "$app"
-		nextcloud_exec_occ "app:enable" "$app"
+# Useful for indirect configuration using bash and env vars
+function keycloak_exec {
+	docker-compose exec keycloak "$@"
+}
+
+
+function keycloak_exec_kcadm {
+	keycloak_exec "$KCADM_PATH" "$@"
+}
+
+
+# $1: Client name
+# $2: Client ID
+# Prints the internal client ID
+function keycloak_exec_kcadm_new_saml_client {
+	local _id=$2 _name=$1
+	keycloak_exec_kcadm create clients -r master -s "clientId=$_id" -s protocol=saml -s enabled=true -s "name=$_name" -s 'defaultClientScopes=[ ]'
+	internal_client_id=$(_keycloak_client_id "$_id")
+	printf '%s' "$internal_client_id"
+}
+
+
+# $1: Client internal ID
+# $2, ...: Words s.a. email, username and so on
+function keycloak_add_mappers_to_client {
+	local _id="$1"
+	shift
+	for stuff in "$@"; do
+		keycloak_exec_kcadm create "clients/$_id/protocol-mappers/models" \
+			-s name="$stuff" \
+			-s protocol=saml \
+			-s protocolMapper=saml-user-attribute-mapper \
+			-s "config.\"user.attribute\"=$stuff" \
+			-s "config.\"attribute.name\"=$stuff" \
+			-s 'config."attribute.nameformat"=Basic' \
+			-s 'config."single"=true'
 	done
 }
 
 
-function ldap_has_config {
+# Helper function, see mappers without the internal ID
+# $1: Client Name
+function _keycloak_list_mappers {
+	_keycloak_login
+	internal_client_id=$(keycloak_exec_kcadm get clients | jq -M --raw-output ".[] | select(.name == \"$1\").id")
+	keycloak_exec_kcadm get "clients/$internal_client_id/protocol-mappers/models"
+}
+
+
+function _next_apps_enable {
+	# Already installed or already enabled states cause errors :-/
+	for app in "$@"; do
+		nextcloud_exec_occ "app:install" "$app" || true
+		nextcloud_exec_occ "app:enable" "$app" || true
+	done
+}
+
+
+function _next_ldap_has_config {
 	out=$(nextcloud_exec_occ ldap:show-config)
 	test -n "$out" && return 0 || return 1
 }
 
 
-function ldap_config_id {
+function _next_ldap_config_id {
 	out=$(nextcloud_exec_occ ldap:show-config)
 	printf "%s" "$(grep '\<Configuration\>' <<< "${out}" | cut -f 3 -d '|' | tr -d '[:blank:]')"
 }
 
-
-function configure_office {
+# vvv Those two are not used ATM vvv
+function _next_configure_office {
 	for item in "${!OFFICE_CONFIGURATION[@]}"; do
 		nextcloud_exec_occ "config:app:set" --value "${OFFICE_CONFIGURATION[$item]}" richdocuments "$item"
 	done
 }
-
-
-function configure_calendar {
+function _next_configure_calendar {
 	for item in "${!CALENDAR_CONFIGURATION[@]}"; do
 		nextcloud_exec_occ "config:app:set" --value "${CALENDAR_CONFIGURATION[$item]}" dav "$item"
 	done
@@ -471,7 +513,7 @@ function configure_calendar {
 
 
 function configure_nextcloud {
-	apps_enable groupfolders user_ldap user_saml richdocuments calendar deck
+	_next_apps_enable groupfolders user_ldap user_saml richdocuments calendar deck
 	if test "$LOCAL_SETUP" = yes; then
 		nextcloud_exec_occ config:system:set --type string --value "localhost" -- trusted_domains 0
 		nextcloud_exec_occ config:system:set --type string --value "gateway" -- trusted_domains 1
@@ -480,7 +522,7 @@ function configure_nextcloud {
 		nextcloud_exec_occ "config:system:set" --value "https" "overwriteprotocol"
 	fi
 	if test "$NEXTCLOUD_WANT_MAIL" = yes; then
-		apps_enable mail
+		_next_apps_enable mail
 		for item in "${!MAIL_DEFAULTS[@]}"; do
 			nextcloud_exec_occ "config:system:set" --value "${MAIL_DEFAULTS[$item]}" app.mail.accounts.default "$item"
 		done
@@ -492,19 +534,19 @@ function configure_nextcloud {
 
 
 function configure_nextcloud_ldap {
-	if ldap_has_config; then
-		c_id=$(ldap_config_id)
+	if _next_ldap_has_config; then
+		c_id=$(_next_ldap_config_id)
 	else
 		out=$(nextcloud_exec_occ 'ldap:create-empty-config')
-		c_id=$(ldap_config_id)
+		c_id=$(_next_ldap_config_id)
 		# c_id=$(sed -e 's/.*configID\s*//' <<< "$out")
 	fi
-	for item in "${!LDAP_INDIRECT_CONFIGURATION[@]}"; do
-		nextcloud_exec_occ_set_ldap_indirect "$c_id" "$item" "${LDAP_INDIRECT_CONFIGURATION[$item]}"
+	for item in "${!NEXT_LDAP_INDIRECT_CONFIGURATION[@]}"; do
+		nextcloud_exec_occ_set_ldap_indirect "$c_id" "$item" "${NEXT_LDAP_INDIRECT_CONFIGURATION[$item]}"
 	done
 
-	for item in "${!LDAP_CONFIGURATION[@]}"; do
-		nextcloud_exec_occ "ldap:set-config" "$c_id" "$item" "${LDAP_CONFIGURATION[$item]}"
+	for item in "${!NEXT_LDAP_CONFIGURATION[@]}"; do
+		nextcloud_exec_occ "ldap:set-config" "$c_id" "$item" "${NEXT_LDAP_CONFIGURATION[$item]}"
 	done
 }
 
@@ -529,7 +571,7 @@ function configure_nextcloud_saml_certs {
 	inline_sp_cert="$(cat "$certdir/service.cert")"
 	inline_sp_key="$(cat "$certdir/service.key")"
 	rm -rf "$certdir"
-	internal_client_id=$(_keycloak_client_id "$NEXTCLOUD_ROOT_URI/apps/user_saml/saml/metadata")
+	internal_client_id=$(_keycloak_client_id "$NEXTCLOUD_SAML_ROOT/metadata")
 	keycloak_update_client "$internal_client_id" 'attributes."saml.signing.certificate"='"$(head -n -1 <<< "$inline_sp_cert" | tail -n +2)"
 	nextcloud_exec_occ "saml:config:set" "--sp-x509cert=$inline_sp_cert" $DEFAULT_SAML_PROVIDER
 	nextcloud_exec_occ "saml:config:set" "--sp-privateKey=$inline_sp_key" $DEFAULT_SAML_PROVIDER
@@ -537,12 +579,12 @@ function configure_nextcloud_saml_certs {
 
 
 function _keycloak_login {
-	keycloak_exec config credentials --server http://localhost:8080 --realm master --user "$ADMIN_USER" --password "$ADMIN_PASSWORD" &> /dev/null
+	keycloak_exec_kcadm config credentials --server http://localhost:8080 --realm master --user "$ADMIN_USER" --password "$ADMIN_PASSWORD" &> /dev/null
 }
 
 
 # $1: The client ID
-# Rest: Update Arguments without -s
+# Rest: Update Arguments without -s, space-separated assignments
 function keycloak_update_client {
 	local _client_id="$1"
 	local _args=()
@@ -550,13 +592,13 @@ function keycloak_update_client {
 	for arg in "$@"; do
 		_args+=(-s "$arg")
 	done
-	keycloak_exec update "clients/$_client_id" --realm master "${_args[@]}"
+	keycloak_exec_kcadm update "clients/$_client_id" --realm master "${_args[@]}"
 }
 
 
 # $1: Literal Client ID URL
 function _keycloak_client_id {
-	printf "%s" "$(keycloak_exec get clients --realm master --server http://localhost:8080 -q "clientId=$1" -F id | jq -M --raw-output '.[0].id')"
+	printf "%s" "$(keycloak_exec_kcadm get clients --realm master --server http://localhost:8080 -q "clientId=$1" -F id | jq -M --raw-output '.[0].id')"
 }
 
 
@@ -565,89 +607,71 @@ function configure_keycloak_rocketchat {
 	client_id="$ROCKETCHAT_ROOT_URI/_saml/metadata/keycloak"
 	internal_client_id=$(_keycloak_client_id "$client_id")
 	if test "$internal_client_id" = null; then
-		keycloak_exec create clients -r master -s "clientId=$client_id" -s protocol=saml -s enabled=true
-		internal_client_id=$(_keycloak_client_id "$client_id")
+		internal_client_id=$(keycloak_exec_kcadm_new_saml_client "Rocket.chat" "$client_id")
+		keycloak_add_mappers_to_client "$internal_client_id" email username firstName lastName
 	fi
 	# Get list of existing config:
-	# keycloak_exec get "clients/$internal_client_id" --realm master
-	keycloak_update_client "$internal_client_id" "name=Rocket.chat" "redirectUris=[\"$ROCKETCHAT_ROOT_URI/_saml/validate/keycloak\"]"
+	# keycloak_exec_kcadm get "clients/$internal_client_id" --realm master
+	keycloak_update_client "$internal_client_id" \
+		"redirectUris=[\"$ROCKETCHAT_ROOT_URI/_saml/validate/keycloak\"]" \
+		"attributes.saml_single_logout_service_url_redirect=$ROCKETCHAT_ROOT_URI/_saml/logout/keycloak" \
+		'attributes."saml.assertion.signature"="true"'
 }
 
 
 function configure_keycloak_next {
 	_keycloak_login
-	client_id="$NEXTCLOUD_ROOT_URI/apps/user_saml/saml/metadata"
+	client_id="$NEXTCLOUD_SAML_ROOT/metadata"
 	internal_client_id=$(_keycloak_client_id "$client_id")
 	if test "$internal_client_id" = null; then
-		keycloak_exec create clients -r master -s "clientId=$client_id" -s protocol=saml -s enabled=true
-		internal_client_id=$(_keycloak_client_id "$client_id")
+		internal_client_id=$(keycloak_exec_kcadm_new_saml_client "Nextcloud" "$client_id")
+		keycloak_add_mappers_to_client "$internal_client_id" email username firstName lastName
 	fi
-	# Get list of existing config:
-	# keycloak_exec get "clients/$internal_client_id" --realm master
-	keycloak_update_client "$internal_client_id" "name=Nextcloud" "redirectUris=[\"$NEXTCLOUD_ROOT_URI/apps/user_saml/saml/acs\"]"
+	keycloak_update_client "$internal_client_id" "redirectUris=[\"$NEXTCLOUD_SAML_ROOT/acs\"]" "attributes.saml_single_logout_service_url_redirect=$NEXTCLOUD_SAML_ROOT/sls"
 }
 
 
 function configure_keycloak_bureau {
 	_keycloak_login
-	client_id="$BUREAU_ROOT_URI/login/saml/metadata"
+	client_id="$BUREAU_SAML_ROOT/metadata"
 	internal_client_id=$(_keycloak_client_id "$client_id")
 	if test "$internal_client_id" = null; then
-		keycloak_exec create clients -r master -s "clientId=$client_id" -s protocol=saml -s enabled=true
-		internal_client_id=$(_keycloak_client_id "$client_id")
+		internal_client_id=$(keycloak_exec_kcadm_new_saml_client "Bureau" "$client_id")
+		keycloak_add_mappers_to_client "$internal_client_id" email username firstName lastName
 	fi
-	# Get list of existing config:
-	# keycloak_exec get "clients/$internal_client_id" --realm master
-	keycloak_update_client "$internal_client_id" "name=Bureau" "redirectUris=[\"$BUREAU_ROOT_URI/login/saml/acs\"]"
+	keycloak_update_client "$internal_client_id" \
+		"redirectUris=[\"$BUREAU_SAML_ROOT/acs\"]" \
+		"attributes.saml_single_logout_service_url_redirect=$BUREAU_SAML_ROOT/sls" \
+		'attributes."saml.assertion.signature"="true"'
 }
 
 
-function _configure_teap_saml_certs {
-	tmp_dir=$(mktemp -d -t certs-XXXXXX)
-	sp_cert="$tmp_dir/myservice.cert"
-	sp_key="$tmp_dir/myservice.key"
-	openssl req -x509 -sha256 -nodes -days 3650 -newkey rsa:2048 -batch -keyout "$sp_key" -out "$sp_cert"
+#
+# $1: Internal ID
+function _keycloak_update_ldap_component {
+	local value
+	for key in "${!KEYCLOAK_LDAP_CONFIGURATION[@]}"; do
+		value="${KEYCLOAK_LDAP_CONFIGURATION[$key]}"
+		keycloak_exec_kcadm update "components/$1" -s "config.$key=[$value]"
+	done
+}
 
-	echo Authorize to KC
-	# SP - KEYCLOAK PART
+
+function configure_keycloak_ldap {
 	_keycloak_login
-
-	# SP - TEAP PART
-	# Be sure to disable assertions encryption and document signing.
-	# Otherwise, the Python SAML client is confused by too many keys.
-	# Related: https://github.com/XML-Security/signxml/issues/143
-	echo get TEAP Client ID KC
-	client_id=$(_keycloak_client_id "$TEAP_ROOT_URI/saml/metadata.xml")
-	echo ID: $client_id
-	echo update KC cert
-	test -n "$client_id" && keycloak_exec update "clients/$client_id" -s 'attributes."saml.signing.certificate"='"$(cat "$sp_cert" | head -n -1 | tail -n +2)"
-	echo update teap sp cert
-	teap_flask saml sp-cert -- "$(cat "$sp_cert")"
-	echo update teap sp key
-	teap_flask saml sp-key -- "$(cat "$sp_key")"
-
-	# cleanup
-	rm -f "$sp_cert" "$sp_key"
-
-	# IdP - KEYCLOAK PART
-	idp_cert="$tmp_dir/myidp.cert"
-	printf '%s\n' '-----BEGIN CERTIFICATE-----' > "$idp_cert"
-	# keycloak_realm_cert=$(keycloak_exec get realms/master/keys -F 'keys(publicKey)' | jq -M --raw-output 'flatten|add.publicKey')
-	keycloak_realm_cert=$(keycloak_exec get realms/master/keys -F 'keys(certificate)' | jq -M --raw-output 'flatten|add.certificate')
-	printf '%s\n' "$keycloak_realm_cert" >> "$idp_cert"
-	printf '%s\n' '-----END CERTIFICATE-----' >> "$idp_cert"
-
-	# IdP - TEAP PART
-	teap_flask saml idp-cert -- "$(cat "$idp_cert")"
-
-	# cleanup
-	rm -f "$idp_cert"
-	rm -rf "$tmp_dir"
+	local ldap_federation_exists=$(keycloak_exec_kcadm get components -r master | jq -r '.[] | select(.providerType=="org.keycloak.storage.UserStorageProvider") | select(.providerId=="ldap") | length > 0')
+	if test "$ldap_federation_exists" != true; then
+		keycloak_exec_kcadm create components -r master -s name="ldap" -s providerId=ldap -s providerType=org.keycloak.storage.UserStorageProvider -s 'config.enabled=["true"]' -s 'config.editMode=["READ_ONLY"]'
+	fi
+	internal_component_id=$(keycloak_exec_kcadm get components -r master | jq -r '.[] | select(.providerType=="org.keycloak.storage.UserStorageProvider") | select(.providerId=="ldap").id')
+	_keycloak_update_ldap_component "$internal_component_id"
+	keycloak_exec bash -c "$KCADM_PATH update components/$internal_component_id -s config.bindCredential=[\\\"\$LDAP_READER_PASSWORD\\\"]"
 }
 
 
 function get_idp_cert {
-	keycloak_realm_cert=$(keycloak_exec get realms/master/keys -F 'keys(certificate)' | jq -M --raw-output 'flatten|add.certificate')
+	# keycloak_realm_cert=$(keycloak_exec_kcadm get realms/master/keys -F 'keys(certificate)' | jq -M --raw-output 'flatten|add.certificate')
+	keycloak_realm_cert=$(keycloak_exec_kcadm get realms/master/keys | jq -M --raw-output '.keys[] | select(.use == "SIG") | select(.type == "RSA").certificate')
 	inline_idp_cert="-----BEGIN CERTIFICATE-----\n${keycloak_realm_cert}\n-----END CERTIFICATE-----\n"
 	printf -- "$inline_idp_cert"
 }
@@ -663,70 +687,8 @@ function generate_rsa_certs {
 }
 
 
-function configure_saml_certs {
-	tmp_dir=$(mktemp -d -t certs-XXXXXX)
-	sp_cert="$tmp_dir/myservice.cert"
-	sp_key="$tmp_dir/myservice.key"
-	openssl req -x509 -sha256 -nodes -days 3650 -newkey rsa:2048 -batch -keyout "$sp_key" -out "$sp_cert"
-
-	# SP - KEYCLOAK PART
-	_keycloak_login
-	# SP - NEXTCLOUD PART
-	DEFAULT_SAML_PROVIDER=1
-	client_id=$(_keycloak_client_id "$NEXTCLOUD_ROOT_URI/apps/user_saml/saml/metadata")
-	keycloak_exec update "clients/$client_id" -s 'attributes."saml.signing.certificate"='"$(cat "$sp_cert" | head -n -1 | tail -n +2)"
-	nextcloud_exec_occ "saml:config:set" "--sp-x509cert" "$(cat "$sp_cert")" $DEFAULT_SAML_PROVIDER
-	nextcloud_exec_occ "saml:config:set" "--sp-privateKey" "$(cat "$sp_key")" $DEFAULT_SAML_PROVIDER
-
-	# SP - ROCKET PART
-	client_id=$(_keycloak_client_id "$ROCKETCHAT_ROOT_URI/_saml/metadata/keycloak")
-	keycloak_exec update "clients/$client_id" -s 'attributes."saml.signing.certificate"='"$(cat "$sp_cert" | head -n -1 | tail -n +2)"
-	mongo_rocket_eval_update rocketchat_settings SAML_Custom_Default_public_cert "\"$(escape_newlines "$(cat "$sp_cert")")\""
-	mongo_rocket_eval_update rocketchat_settings SAML_Custom_Default_private_key "\"$(escape_newlines "$(cat "$sp_key")")\""
-
-	# SP - TEAP PART
-	# Be sure to disable assertions encryption and document signing.
-	# Otherwise, the Python SAML client is confused by too many keys.
-	# Related: https://github.com/XML-Security/signxml/issues/143
-	client_id=$(_keycloak_client_id "$TEAP_ROOT_URI/saml/metadata.xml")
-	test -n "$client_id" && keycloak_exec update "clients/$client_id" -s 'attributes."saml.signing.certificate"='"$(cat "$sp_cert" | head -n -1 | tail -n +2)"
-	teap_flask saml sp-cert -- "$(cat "$sp_cert")"
-	teap_flask saml sp-key -- "$(cat "$sp_key")"
-
-	# cleanup
-	rm -f "$sp_cert" "$sp_key"
-
-	# IdP - KEYCLOAK PART
-	idp_cert="$tmp_dir/myidp.cert"
-	printf '%s\n' '-----BEGIN CERTIFICATE-----' > "$idp_cert"
-	# keycloak_realm_cert=$(keycloak_exec get realms/master/keys -F 'keys(publicKey)' | jq -M --raw-output 'flatten|add.publicKey')
-	keycloak_realm_cert=$(keycloak_exec get realms/master/keys -F 'keys(certificate)' | jq -M --raw-output 'flatten|add.certificate')
-	printf '%s\n' "$keycloak_realm_cert" >> "$idp_cert"
-	printf '%s\n' '-----END CERTIFICATE-----' >> "$idp_cert"
-
-	# IdP - NEXTCLOUD PART
-	nextcloud_exec_occ "saml:config:set" "--idp-x509cert" "$(cat "$idp_cert")" $DEFAULT_SAML_PROVIDER
-
-	# IdP - ROCKET PART
-	# mongo_rocket_eval_update rocketchat_settings SAML_Custom_Default_cert "\"$keycloak_realm_cert\""
-	mongo_rocket_eval_update rocketchat_settings SAML_Custom_Default_cert "\"$(escape_newlines "$keycloak_realm_cert")\""
-
-	# IdP - TEAP PART
-	teap_flask saml idp-cert -- "$(cat "$idp_cert")"
-
-	# cleanup
-	rm -f "$idp_cert"
-	rm -rf "$tmp_dir"
-}
-
-
-function mongo_rocket {
-	docker-compose exec mongo-"$ROCKETCHAT_HOSTNAME" "$@"
-}
-
-
 function mongo_rocket_eval {
-	mongo_rocket mongosh 'db/rocketchat' --eval "$1"
+	docker-compose exec mongo-rocket mongosh 'db/rocketchat' --eval "$1"
 }
 
 
@@ -741,12 +703,18 @@ function mongo_rocket_eval_update {
 }
 
 
-function configure_rocketchat {
-	# Init the mongo db
+function configure_mongo {
 	for i in $(seq 1 30); do
-		mongo_rocket_eval "rs.status()" > /dev/null && return
+		mongo_rocket_eval "rs.status()" > /dev/null && break
 		mongo_rocket_eval "rs.initiate({ _id: 'rs0', members: [ { _id: 0, host: 'localhost:27017' } ]})" && break || echo "Tried $i times. Waiting 5 secs..."
 		sleep 5
+	done
+}
+
+
+function configure_rocketchat_general {
+	for item in "${!MONGO_ACCOUNTS[@]}"; do
+		mongo_rocket_eval_update rocketchat_settings "Accounts_$item" "${MONGO_ACCOUNTS[$item]}"
 	done
 }
 
@@ -771,7 +739,7 @@ function configure_rocketchat_saml_certs {
 	DEFAULT_SAML_PROVIDER=1
 	_keycloak_login
 	inline_idp_cert="$(get_idp_cert)"
-	mongo_rocket_eval_update rocketchat_settings "SAML_Custom_Default_cert" "\"$(escape_newlines "$inline_sp_cert")\""
+	mongo_rocket_eval_update rocketchat_settings "SAML_Custom_Default_cert" "\"$(head -n -1 <<< "$inline_idp_cert" | tail -n +2)\""
 
 	certdir="$(generate_rsa_certs rocket)"
 	inline_sp_cert="$(cat "$certdir/service.cert")"
@@ -782,36 +750,6 @@ function configure_rocketchat_saml_certs {
 	internal_client_id=$(_keycloak_client_id "$ROCKETCHAT_ROOT_URI/_saml/metadata/keycloak")
 	keycloak_update_client "$internal_client_id" 'attributes."saml.signing.certificate"='"$(head -n -1 <<< "$inline_sp_cert" | tail -n +2)"
 }
-
-
-function substitute_env_vars_in_file {
-	readarray envs -t < <(set | grep '^[A-Z_]\+=[^(]')
-	for env_line in "${envs[@]}"; do
-		varname=$(cut -f 1 -d = <<< "$env_line")
-		value=$(cut -f 1 -d = --complement <<< "$env_line")
-		sed -i "s|@$varname@|$value|g" "$1"
-	done
-}
-
-
-function create_nginx_files {
-	cp config/nginx.conf.in config/nginx.conf
-	substitute_env_vars_in_file "config/nginx.conf"
-	cp 'data/gateway/config-v1.1.xml.in' 'data/gateway/config-v1.1.xml'
-	substitute_env_vars_in_file 'data/gateway/config-v1.1.xml'
-}
-
-
-function teap_flask {
-	docker-compose exec -e FLASK_APP=backend/app.py teap flask "$@"
-}
-
-
-function configure_teap {
-	teap_flask db upgrade
-	teap_flask bootstrap
-}
-
 
 
 # $1: DB container name
@@ -859,6 +797,8 @@ olcAccess: to attrs=cn,userPassword,givenName,sn,jpegPhoto
   by self write
   by dn="$ADMIN_DN" write
   by * none break
+olcAccess: to attrs=userPassword,shadowLastChange
+  by anonymous auth
 olcAccess: to dn.subtree="$ALL_PEOPLE_DN"
   by dn="$MAINT_DN" read
   by dn="$ADMIN_DN" write
@@ -880,15 +820,6 @@ EOF
 }
 
 
-# $1: filename
-# $2: edit-expression
-function _edit_json {
-	local _tmpfile=/tmp/json-edit
-	jq "$2" "$1" > $_tmpfile && mv $_tmpfile "$1"
-	rm -f $_tmpfile
-}
-
-
 function configure_bureau_saml_except_certs {
 	DATADIR=data
 cat > "$DATADIR/bureau/settings.json" << EOF
@@ -896,27 +827,27 @@ cat > "$DATADIR/bureau/settings.json" << EOF
     "strict": true,
     "debug": false,
     "sp": {
-        "entityId": "$BUREAU_ROOT_URI/login/saml/metadata",
+        "entityId": "$BUREAU_SAML_ROOT/metadata",
         "assertionConsumerService": {
-            "url": "$BUREAU_ROOT_URI/login/saml/acs",
+            "url": "$BUREAU_SAML_ROOT/acs",
             "binding": "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST"
         },
         "singleLogoutService": {
-            "url": "$BUREAU_ROOT_URI/login/saml/sls",
+            "url": "$BUREAU_SAML_ROOT/sls",
             "binding": "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect"
         },
-        "NameIDFormat": "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress",
+        "NameIDFormat": "urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified",
         "x509cert": "",
         "privateKey": ""
     },
     "idp": {
-        "entityId": "$KEYCLOAK_ROOT_URI/realms/master",
+        "entityId": "$KEYCLOAK_MASTER_ROOT",
         "singleSignOnService": {
-            "url": "$KEYCLOAK_ROOT_URI/realms/master/protocol/saml",
+            "url": "$KEYCLOAK_SAML_ROOT",
             "binding": "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect"
         },
         "singleLogoutService": {
-            "url": "$KEYCLOAK_ROOT_URI/realms/master/protocol/saml",
+            "url": "$KEYCLOAK_SAML_ROOT",
             "binding": "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect"
         },
         "x509cert": ""
@@ -942,6 +873,15 @@ EOF
 }
 
 
+# $1: filename
+# $2: edit-expression
+function _edit_json {
+	local _tmpfile=/tmp/json-edit
+	jq "$2" "$1" > $_tmpfile && mv $_tmpfile "$1"
+	rm -f $_tmpfile
+}
+
+
 function configure_bureau_saml_certs {
 	DATADIR=data
 	local _bureau_config="$DATADIR/bureau/settings.json"
@@ -951,19 +891,73 @@ function configure_bureau_saml_certs {
 	_edit_json "$_bureau_config" ".idp.x509cert = \"$pure_inline_idp_cert\""
 
 	certdir="$(generate_rsa_certs bureau)"
-	pure_inline_sp_cert="$(head -n -1 "$certdir/service.cert" | tail -n +2)"
-	pure_inline_sp_key="$(head -n -1 "$certdir/service.key" | tail -n +2)"
+	pure_inline_sp_cert="$(head -n -1 "$certdir/service.cert" | tail -n +2 | tr -d '\n')"
+	pure_inline_sp_key="$(head -n -1 "$certdir/service.key" | tail -n +2 | tr -d '\n')"
 	rm -rf "$certdir"
-	internal_client_id=$(_keycloak_client_id "$BUREAU_ROOT_URI/login/saml/metadata")
-	keycloak_update_client "$internal_client_id" 'attributes."saml.signing.certificate"='"$pure_inline_sp_cert"
+	internal_client_id=$(_keycloak_client_id "$BUREAU_SAML_ROOT/metadata")
+	keycloak_update_client "$internal_client_id" "attributes.\"saml.signing.certificate\"=$pure_inline_sp_cert"
 	_edit_json "$_bureau_config" ".sp.x509cert = \"$pure_inline_sp_cert\""
 	_edit_json "$_bureau_config" ".sp.privateKey = \"$pure_inline_sp_key\""
 }
 
 
-# configure_nextcloud
-# configure_nextcloud_ldap
-# configure_nextcloud_saml_except_certs
-# configure_keycloak
-# configure_saml_certs
-# configure_rocketchat
+function configure_keycloak_redmine {
+	_keycloak_login
+	client_id="$REDMINE_SAML_ROOT/metadata"
+	internal_client_id=$(_keycloak_client_id "$client_id")
+	if test "$internal_client_id" = null; then
+		internal_client_id=$(keycloak_exec_kcadm_new_saml_client "Redmine" "$client_id")
+		keycloak_add_mappers_to_client "$internal_client_id" email username firstName lastName
+	fi
+	keycloak_update_client "$internal_client_id" \
+		"redirectUris=[\"$REDMINE_SAML_ROOT/callback\"]" \
+		"attributes.saml_single_logout_service_url_redirect=$REDMINE_SAML_ROOT/sls" \
+		'attributes."saml.client.signature"="false"'
+}
+
+
+function configure_redmine_saml {
+	_keycloak_login
+	inline_idp_cert="$(get_idp_cert)"
+	DATADIR=data
+	_tmpfname=$(mktemp)
+cat > "$_tmpfname" << EOF
+# frozen_string_literal: true
+
+require Rails.root.join('plugins/redmine_saml/lib/redmine_saml')
+require Rails.root.join('plugins/redmine_saml/lib/redmine_saml/base')
+
+RedmineSaml::Base.configure do |config|
+  config.saml = {
+    # Redmine callback URL
+    assertion_consumer_service_url: "$REDMINE_ROOT_URI#{RedmineSaml::CALLBACK_PATH}",
+    # The issuer name / entity ID. Must be an URI as per SAML 2.0 spec.
+    sp_entity_id: "$REDMINE_ROOT_URI#{RedmineSaml::METADATA_PATH}",
+    # The SLS (logout) callback URL
+    single_logout_service_url: "$REDMINE_ROOT_URI#{RedmineSaml::LOGOUT_SERVICE_PATH}",
+    # SSO login endpoint
+    idp_sso_service_url: '$KEYCLOAK_SAML_ROOT',
+    # Alternatively, specify the full certifiate
+    # NOTE: only use idp_cert OR idp_cert_fingerprint (not both!)
+    idp_cert: '$inline_idp_cert',
+    name_identifier_format: 'urn:oasis:names:tc:SAML:2.0:nameid-format:username',
+    # Optional signout URL, not supported by all identity providers
+    idp_slo_service_url: '$KEYCLOAK_SAML_ROOT',
+    # Which redmine field is used as name_identifier_value for SAML logout
+    name_identifier_value: 'username',
+    attribute_mapping: {
+      login: 'extra|raw_info|username',
+      mail: 'extra|raw_info|email',
+      firstname: 'extra|raw_info|firstName',
+      lastname: 'extra|raw_info|lastName',
+      admin: 'extra|raw_info|admin'
+    }
+  }
+
+  config.on_login do |omniauth_hash, user|
+    # Implement any hook you want here
+  end
+end
+EOF
+	podman unshare mv "$_tmpfname" "$DATADIR/redmine/saml.rb"
+}
