@@ -1,29 +1,25 @@
-version: '2.2'
-
 services:
-  collabora:
-    image: collabora/code
-    environment:
-     - domain=$COLLABORA_DOMAIN_REGEX
-     - username=$ADMIN_USERNAME
-     - password=$ADMIN_PASSWORD
-     # - DONT_GEN_SSL_CERT=dont
-     - server_name=collabora.$DOMAINNAME
-    cap_add:
-     - MKNOD 
-    networks:
-      - collabora-frontend
-
   db-next:
-    image: postgres:alpine
-    restart: always
+    image: postgres:$POSTGRES_MAJOR-alpine
+    restart: unless-stopped
     volumes:
-      - ./data/next/db:/var/lib/postgresql/data
+      - ./data/next/db:/var/lib/postgresql/data:Z
     environment:
       - POSTGRES_PASSWORD=$NEXT_POSTGRES_PASSWORD
-      # Nextcloud requires that it creates the DB during installation
-      - POSTGRES_DB=foobarrr
+      - POSTGRES_DB=$NEXT_POSTGRES_DB
       - POSTGRES_USER=$NEXT_POSTGRES_USER
+    deploy:
+      resources:
+        limits:
+          cpus: '0.20'
+          memory: 200M
+        reservations:
+          memory: 150M
+    healthcheck:
+      test: ["CMD-SHELL", "sh -c 'pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}'"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
     networks:
       next-backend:
         aliases:
@@ -31,14 +27,19 @@ services:
 
   # Needs to install apps
   # docker-compose exec -u www-data next ./occ app:install groupfolders
+  # Also requires enabling access to nginx user
+  # and also specifying the directory as good for the server to look inside
+  # semanage fcontext -a -t httpd_sys_content_t "/srv/static/next(/.*)?"
+  # restorecon -Rv /srv/static/next
   next:
-    image: nextcloud:apache
+    image: nextcloud:29-fpm
     volumes:
-      - ./data/next/data:/var/www/html
+      - ./data/next/data/html:/var/www/html:z
+      - ./data/next/data/html:/srv/static/next:z
+      - ./data/next/data/data:/var/www/html/data:Z
     depends_on:
       - db-next
       - openldap
-      - keycloak
     environment:
       - POSTGRES_PASSWORD=$NEXT_POSTGRES_PASSWORD
       - POSTGRES_DB=$NEXT_POSTGRES_DB
@@ -47,63 +48,97 @@ services:
 
       - NEXTCLOUD_ADMIN_USER=$ADMIN_USERNAME
       - NEXTCLOUD_ADMIN_PASSWORD=$ADMIN_PASSWORD
-      - NEXTCLOUD_TRUSTED_DOMAINS=$NEXT_HOSTNAME.$DOMAINNAME
+      - NEXTCLOUD_TRUSTED_DOMAINS=$NEXT_HOSTNAME.$DOMAINNAME $NEXT_HOSTNAME
+
+      - LDAP_READER_DN=$LDAP_READER_DN
+      - LDAP_READER_PASSWORD=$LDAP_READER_PASSWORD
+    deploy:
+      resources:
+        limits:
+          cpus: '0.30'
+          memory: 300M
+        reservations:
+          memory: 150M
+    healthcheck:
+      test: ["CMD-SHELL", "su -l www-data -s /usr/local/bin/php /var/www/html/occ status 2>/dev/null | grep -e 'installed: true' -e 'maintenance: false' -e 'needsDbUpgrade: false' | wc -l | [ `cat` = 3 ]"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
     networks:
-      - next-frontend
       - next-backend
       - ldap-backend
-      - keycloak-frontend
 
   gateway:
     image: nginx:stable
     ports:
-      - 80:80
-      - 443:443
-    depends_on:
-      - phpldapadmin
-      - rocketchat
-      - collabora
-      - next
-      - keycloak
-      - teap
+      - "1181:1181"
+      - "1182:1182"
+      - "1183:1183"
+      - "1184:1184"
+      - "1185:1185"
+      - "1186:1186"
     volumes:
-      - ./config/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./data/gateway/:/www/media/autoconfig/mail:ro
-      - /etc/letsencrypt:/etc/letsencrypt:ro
+      - ./data/next/data/html:/srv/static/next:ro,z
+      - ./data/gateway/conf.d:/etc/nginx/conf.d:ro,Z
+    depends_on:
+      - bureau
+      - keycloak
+      - next
+      - phpldapadmin
+      - redmine
+      - rocketchat
+    deploy:
+      resources:
+        limits:
+          cpus: '0.10'
+          memory: 60M
+        reservations:
+          memory: 50M
     networks:
-      - ldap-frontend
-      - next-frontend
-      - rocket-frontend
-      - collabora-frontend
-      - keycloak-frontend
-      - teap-frontend
+      - next-backend
+      - ldap-backend
+      - rocket-backend
+      - keycloak-backend
 
   mongo-rocket:
-    image: mongo:4.0
+    image: mongo:6.0
     volumes:
-      - ./data/rocket/mongo:/data/db
-    command: mongod --oplogSize 128 --replSet rs0 --storageEngine=wiredTiger
+      - ./data/rocket/mongo:/data/db:Z
+    restart: unless-stopped
+    command: mongod --oplogSize 128 --replSet rs0 --storageEngine=wiredTiger --bind_ip localhost,db
+    security_opt:
+      - "seccomp=unconfined"
     labels:
       - "traefik.enable=false"
+    deploy:
+      resources:
+        limits:
+          cpus: '0.40'
+          memory: 500M
+        reservations:
+          memory: 400M
+    healthcheck:
+      test: ["CMD-SHELL", "mongosh --eval 'db.adminCommand(\"ping\")' --quiet || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     networks:
       rocket-backend:
         aliases:
           - db
 
   rocketchat:
-    image: rocket.chat
+    image: rocket.chat:6.0
     volumes:
-      - ./data/rocket/uploads:/app/uploads
-    # ports:
-    # - "8080:3000"
+      - ./data/rocket/uploads:/app/bundle/programs/server/uploads/:Z
     environment:
-      - ROOT_URL=https://rocket.$DOMAINNAME
-      - MONGO_URL=mongodb://db:27017/rocketchat
-      - MONGO_OPLOG_URL=mongodb://db:27017/local
+      - ROOT_URL=http://localhost:1182
+      - MONGO_URL=mongodb://db:27017/rocketchat?replicaSet=rs0&directConnection=true
+      - MONGO_OPLOG_URL=mongodb://db:27017/local?replicaSet=rs0&directConnection=true
 
       - PORT=3000
 
-      - ADMIN_USERNAME=$ADMIN_USERNAME
+      - ADMIN_USERNAME=$ROCKET_ADMIN_USERNAME
       - ADMIN_PASS=$ADMIN_PASSWORD
       - Accounts_UseDNSDomainCheck=false
       - OVERWRITE_SETTING_Show_Setup_Wizard=completed
@@ -111,31 +146,46 @@ services:
     depends_on:
       - mongo-rocket
       - openldap
-      - keycloak
+    deploy:
+      resources:
+        limits:
+          cpus: '0.90'
+          memory: 1G
+        reservations:
+          memory: 900M
     networks:
       - ldap-backend
       - rocket-backend
-      - rocket-frontend
-      - keycloak-frontend
     labels:
-      - "traefik.backend=rocketchat"
+      - "traefik.backend=rocket"
       - "traefik.frontend.rule=Host: rocket.$DOMAINNAME"
 
+
   openldap:
-    image: cspii/openldap
+    image: entint/openldap
     build:
       context: build/openldap
+    # command: "--loglevel debug"
+    # command: --copy-service
+    ports:
+      - "1389:389"
     environment:
       LDAP_TLS: 'false'
       LDAP_ORGANISATION: "The Enterprisey Intranet"
       LDAP_DOMAIN: "$DOMAINNAME"
       LDAP_BASE_DN: "$LDAP_BASE_DN"
       LDAP_ADMIN_PASSWORD: "$ADMIN_PASSWORD"
+      LDAP_LOG_LEVEL: "256"
     volumes:
-      - ./data/ldap/data:/var/lib/ldap
-      - ./data/ldap/slapd.d:/etc/ldap/slapd.d
-    # ports:
-    #   - "389:389"
+      - ./data/ldap/data:/var/lib/ldap:Z
+      - ./data/ldap/slapd.d:/etc/ldap/slapd.d:Z
+    deploy:
+      resources:
+        limits:
+          cpus: '0.10'
+          memory: 80M
+        reservations:
+          memory: 50M
     networks:
       ldap-backend:
         aliases:
@@ -148,14 +198,20 @@ services:
       PHPLDAPADMIN_HTTPS=false:
     depends_on:
       - openldap
+    deploy:
+      resources:
+        limits:
+          cpus: '0.10'
+          memory: 80M
+        reservations:
+          memory: 50M
     networks:
       - ldap-backend
-      - ldap-frontend
 
   db-keycloak:
-    image: postgres:alpine
+    image: postgres:$POSTGRES_MAJOR-alpine
     volumes:
-      - ./data/keycloak/db:/var/lib/postgresql/data
+      - ./data/keycloak/db:/var/lib/postgresql/data:Z
     environment:
       - POSTGRES_PASSWORD=$KEYCLOAK_POSTGRES_PASSWORD
       - POSTGRES_DB=$KEYCLOAK_POSTGRES_DB
@@ -164,131 +220,151 @@ services:
       keycloak-backend:
         aliases:
           - db
+    healthcheck:
+      test: ["CMD-SHELL", "sh -c 'pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}'"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '0.20'
+          memory: 200M
+        reservations:
+          memory: 150M
 
   keycloak:
-    image: jboss/keycloak
-    # ports:
-    # - 8180:8080
+    image: entint/keycloak
+    build:
+      context: build/keycloak
+    command:
+      start --optimized --log-level=INFO
+    security_opt:
+      - "seccomp=unconfined"
     environment:
+      - KC_DB_URL=jdbc:postgresql://db:5432/$KEYCLOAK_POSTGRES_DB
+      - KC_DB_USERNAME=$KEYCLOAK_POSTGRES_USER
+      - KC_DB_PASSWORD=$KEYCLOAK_POSTGRES_PASSWORD
+      - KC_HOSTNAME=http://localhost:1184
+      - KC_PROXY_HEADERS=xforwarded
+      - KC_HTTP_ENABLED=true
       - DB_VENDOR=postgres
-      - DB_ADDR=db
-      - DB_USER=$KEYCLOAK_POSTGRES_USER
-      - DB_PASSWORD=$KEYCLOAK_POSTGRES_PASSWORD
+      - KC_BOOTSTRAP_ADMIN_USERNAME=$ADMIN_USERNAME
+      - KC_BOOTSTRAP_ADMIN_PASSWORD=$ADMIN_PASSWORD
 
-      - PROXY_ADDRESS_FORWARDING=true
-      # - KEYCLOAK_HOSTNAME=sso.$DOMAINNAME
-      - KEYCLOAK_HOSTNAME=localhost
+      - LDAP_READER_PASSWORD=$LDAP_READER_PASSWORD
 
-      - KEYCLOAK_USER=$ADMIN_USERNAME 
-      - KEYCLOAK_PASSWORD=$ADMIN_PASSWORD
-
-      - KEYCLOAK_HTTPS_PORT=443
-      # - KEYCLOAK_HTTP_PORT=80
-      - KEYCLOAK_HTTP_PORT=8180
     depends_on:
       - db-keycloak
       - openldap
+    deploy:
+      resources:
+        limits:
+          cpus: '2.60'
+          memory: 1650M
+        reservations:
+          memory: 1550M
+    healthcheck:
+      test: ["CMD-SHELL", "curl --head -fsS http://localhost:9000/health/ready"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
     networks:
       - ldap-backend
-      - keycloak-frontend
       - keycloak-backend
 
-  teap:
-    image: entint/teap
-    build: 
-      context: build/teap
-    volumes:
-      - ./config/ldap.ini:/app/ldap.ini:ro
-      - ./data/certs/tmp:/tmp
+  bureau:
+    image: entint/bureau
+    depends_on:
+      - rocketchat
+      - phpldapadmin
     environment:
-      - AUTHORIZATION=yes
-      - SERVER_NAME=teap.$DOMAINNAME
-      # - PREFERRED_URL_SCHEME=https
-
-      - FLASK_APP=backend/app.py
-      # - FLASK_ENV=development
-      - FLASK_ENV=production
-
-      - DATABASE_URL=$TEAP_DATABASE_URL
-      - SECRET_KEY=$TEAP_SECRET_KEY
-
-      - NEXTCLOUD_HOST=$TEAP_NEXTCLOUD_HOST
-      - NEXTCLOUD_USER=$ADMIN_USERNAME
       - NEXTCLOUD_PASSWORD=$ADMIN_PASSWORD
+      - NEXTCLOUD_HOST=http://gateway:1181
+      - NEXTCLOUD_USER=$ADMIN_USERNAME
 
-      - ROCKETCHAT_HOST=$TEAP_ROCKETCHAT_HOST
-      - ROCKETCHAT_USER=$ADMIN_USERNAME
+      - ROCKETCHAT_HOST=http://rocketchat:3000
       - ROCKETCHAT_PASSWORD=$ADMIN_PASSWORD
+      - ROCKETCHAT_USER=$ROCKET_ADMIN_USERNAME
 
-      - EDAP_HOSTNAME=ldap.$DOMAINNAME
-      - EDAP_USER=cn=$ADMIN_USERNAME
+      - EDAP_HOSTNAME=ldap:389
       - EDAP_PASSWORD=$ADMIN_PASSWORD
       - EDAP_DOMAIN=$DOMAINNAME
+      - LDAP_READER_PASSWORD=$LDAP_READER_PASSWORD
+      - EDAP_USER=cn=admin
 
-      - OAUTHLIB_RELAX_TOKEN_SCOPE=true
-    networks:
-      - teap-frontend
-
-
-  db-roundcube:
-    image: postgres:alpine
-    restart: always
+      - SAML_PATH=/app/saml
     volumes:
-      - ./data/roundcube/db:/var/lib/postgresql/data
-    environment:
-      - POSTGRES_PASSWORD=$ROUNDCUBE_POSTGRES_PASSWORD
-      # Nextcloud requires that it creates the DB during installation
-      - POSTGRES_DB=roundcubemail
-      - POSTGRES_USER=$ROUNDCUBE_POSTGRES_USER
+      - ./data/bureau/env:/app/.env:Z
+      - ./data/bureau/ldap.ini:/app/ldap.ini:Z
+      - ./data/bureau/settings.json:/app/saml/settings.json:Z
+    security_opt:
+      - "seccomp=unconfined"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s -o /dev/null http://localhost:8080 || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
     networks:
-      roundcube-backend:
-        aliases:
-          - postgres
+      - ldap-backend
+      - keycloak-backend
+      - next-backend
+      - rocket-backend
 
 
-  roundcube:
-    restart: on-failure
-    # image: roundcube/roundcubemail:1.4.x-apache
-    image: cspii/roundcube
-    ports:
-      - "8080:80"
-    volumes:
-      - ./data/roundcube/plugins:/var/www/html/plugins
-      - ./data/roundcube/config:/var/roundcube/config
-    environment:
-      - ROUNDCUBEMAIL_PLUGINS=identity_select managesieve
-
-      - ROUNDCUBEMAIL_DEFAULT_HOST=tls://${MAIL_HOSTNAME}.${DOMAINNAME}
-      - ROUNDCUBEMAIL_DEFAULT_PORT=143
-      - ROUNDCUBEMAIL_SMTP_SERVER=tls://${MAIL_HOSTNAME}.${DOMAINNAME}
-      - ROUNDCUBEMAIL_SMTP_PORT=587
-
-      - ROUNDCUBEMAIL_DB_TYPE=pgsql
-      - ROUNDCUBEMAIL_DB_USER=$ROUNDCUBE_POSTGRES_USER
-      - ROUNDCUBEMAIL_DB_PASSWORD=$ROUNDCUBE_POSTGRES_PASSWORD
-      - ROUNDCUBEMAIL_UPLOAD_MAX_FILESIZE=50M
-
-      - READER_DN=$READER_DN
-      - READER_PASSWORD=$READER_PASSWORD
-    networks:
-      - roundcube-backend
-      #  - ldap-backend
-      # - roundcube-frontend
+  redmine:
+    image: entint/redmine
+    build:
+      context: build/redmine
     depends_on:
-      - db-roundcube
-      #  - openldap
+      - openldap
+      - db-redmine
+    environment:
+      - REDMINE_DB_POSTGRES=db
+      - REDMINE_DB_USERNAME=$REDMINE_POSTGRES_USER
+      - REDMINE_DB_PASSWORD=$REDMINE_POSTGRES_PASSWORD
+      - REDMINE_DB_DATABASE=$REDMINE_POSTGRES_DB
+      - REDMINE_PLUGINS_MIGRATE=true
+      - SECRET_KEY_BASE=$REDMINE_SECRET
+    volumes:
+      - ./data/redmine/files:/usr/src/redmine/files:Z
+      - ./data/redmine/saml.rb:/usr/src/redmine/config/initializers/saml.rb:Z
+    security_opt:
+      - "seccomp=unconfined"
+    networks:
+      - redmine-backend
+      - ldap-backend
 
+
+  db-redmine:
+    image: postgres:14-alpine
+    environment:
+      - POSTGRES_USER=$REDMINE_POSTGRES_USER
+      - POSTGRES_PASSWORD=$REDMINE_POSTGRES_PASSWORD
+      - POSTGRES_DB=$REDMINE_POSTGRES_DB
+    volumes:
+      - ./data/redmine/db:/var/lib/postgresql/data:Z
+    deploy:
+      resources:
+        limits:
+          cpus: '0.20'
+          memory: 200M
+        reservations:
+          memory: 150M
+    healthcheck:
+      test: ["CMD-SHELL", "sh -c 'pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}'"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      redmine-backend:
+        aliases:
+          - db
 
 # Custom network so all services can communicate using a FQDN
 networks:
-  next-backend:
-  next-frontend:
-  rocket-backend:
-  rocket-frontend:
-  roundcube-backend:
-  ldap-backend:
-  ldap-frontend:
-  collabora-frontend:
   keycloak-backend:
-  keycloak-frontend:
-  teap-frontend:
+  next-backend:
+  rocket-backend:
+  redmine-backend:
+  ldap-backend:
