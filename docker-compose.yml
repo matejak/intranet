@@ -162,9 +162,7 @@ services:
 
 
   openldap:
-    image: entint/openldap
-    build:
-      context: build/openldap
+    image: osixia/openldap
     # command: "--loglevel debug"
     # command: --copy-service
     ports:
