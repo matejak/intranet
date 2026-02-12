@@ -31,15 +31,13 @@ services:
   # and also specifying the directory as good for the server to look inside
   # semanage fcontext -a -t httpd_sys_content_t "/srv/static/next(/.*)?"
   # restorecon -Rv /srv/static/next
-  next:
+  next-common: &next-common
     image: nextcloud:29-fpm
     volumes:
       - ./data/next/data/html:/var/www/html:z
       - ./data/next/data/html:/srv/static/next:z
       - ./data/next/data/data:/var/www/html/data:Z
-    depends_on:
-      - db-next
-      - openldap
+      - ./provision.sh:/usr/local/lib/provision.sh
     environment:
       - POSTGRES_PASSWORD=$NEXT_POSTGRES_PASSWORD
       - POSTGRES_DB=$NEXT_POSTGRES_DB
@@ -68,6 +66,27 @@ services:
       - next-backend
       - ldap-backend
 
+  next:
+    <<: *next-common
+    depends_on:
+      db-next:
+        condition: service_healthy
+      # TODO this might belong to next-init.depends_on
+      ldap-config-acl:
+        condition: service_completed_successfully
+
+  next-init:
+    <<: *next-common
+    entrypoint: >
+      bash -c '
+        . /usr/local/lib/provision.sh
+        configure_nextcloud
+        configure_nextcloud_ldap
+        '
+    depends_on:
+      next:
+        condition: service_healthy
+
   gateway:
     image: nginx:stable
     ports:
@@ -81,12 +100,18 @@ services:
       - ./data/next/data/html:/srv/static/next:ro,z
       - ./data/gateway/conf.d:/etc/nginx/conf.d:ro,Z
     depends_on:
-      - bureau
-      - keycloak
-      - next
-      - phpldapadmin
-      - redmine
-      - rocketchat
+      bureau:
+        condition: service_healthy
+      keycloak-config:
+        condition: service_completed_successfully
+      next:
+        condition: service_healthy
+      phpldapadmin:
+        condition: service_started
+      redmine:
+        condition: service_healthy
+      rocketchat:
+        condition: service_started
     deploy:
       resources:
         limits:
@@ -99,6 +124,7 @@ services:
       - ldap-backend
       - rocket-backend
       - keycloak-backend
+      - redmine-backend
 
   mongo-rocket:
     image: mongo:6.0
@@ -127,6 +153,25 @@ services:
         aliases:
           - db
 
+  mongo-init-rs:
+    image: mongo:6
+    depends_on:
+      mongo-rocket:
+        condition: service_healthy
+    entrypoint: >
+      bash -c '
+      until mongosh --host mongo-rocket --quiet --eval "rs.status().ok" ||
+            mongosh --host mongo-rocket --quiet --eval "rs.initiate({
+                _id: \"rs0\",
+                members: [{ _id: 0, host: \"mongo-rocket:27017\" }]
+            }).ok
+      "; do
+        sleep 2
+      done
+      '
+    networks:
+      - rocket-backend
+
   rocketchat:
     image: rocket.chat:6.0
     volumes:
@@ -144,8 +189,10 @@ services:
       - OVERWRITE_SETTING_Show_Setup_Wizard=completed
     command: bash -c 'for i in `seq 1 30`; do node main.js && s=$$? && break || s=$$?; echo "Tried $$i times. Waiting 5 secs..."; sleep 5; done; (exit $$s)'
     depends_on:
-      - mongo-rocket
-      - openldap
+      ldap-config-acl:
+        condition: service_completed_successfully
+      mongo-init-rs:
+        condition: service_completed_successfully
     deploy:
       resources:
         limits:
@@ -177,6 +224,7 @@ services:
     volumes:
       - ./data/ldap/data:/var/lib/ldap:Z
       - ./data/ldap/slapd.d:/etc/ldap/slapd.d:Z
+      - ./ldap-health-check.sh:/usr/local/bin/ldap-health-check.sh
     deploy:
       resources:
         limits:
@@ -184,10 +232,25 @@ services:
           memory: 80M
         reservations:
           memory: 50M
+    healthcheck:
+      test: [ "CMD", "/usr/local/bin/ldap-health-check.sh" ]
     networks:
       ldap-backend:
         aliases:
           - ldap
+
+  ldap-config-acl:
+    image: entint/openldap
+    volumes:
+      - ./provision.sh:/usr/local/lib/provision.sh
+    depends_on:
+      openldap:
+        condition: service_healthy
+    entrypoint: >
+      bash -c '
+      . /usr/local/lib/provision.sh
+      configure_ldap_acl
+      '
 
   phpldapadmin:
     image: osixia/phpldapadmin
@@ -195,7 +258,8 @@ services:
       PHPLDAPADMIN_LDAP_HOSTS: "openldap"
       PHPLDAPADMIN_HTTPS=false:
     depends_on:
-      - openldap
+      ldap-config-acl:
+        condition: service_completed_successfully
     deploy:
       resources:
         limits:
@@ -253,8 +317,10 @@ services:
       - LDAP_READER_PASSWORD=$LDAP_READER_PASSWORD
 
     depends_on:
-      - db-keycloak
-      - openldap
+      db-keycloak:
+        condition: service_healthy
+      ldap-config-acl:
+        condition: service_completed_successfully
     deploy:
       resources:
         limits:
@@ -271,8 +337,28 @@ services:
       - ldap-backend
       - keycloak-backend
 
+  keycloak-config:
+    image: entint/keycloak
+    volumes:
+      - ./provision.sh:/usr/local/lib/provision.sh
+    depends_on:
+      keycloak:
+        condition: service_healthy
+    entrypoint: >
+      bash -c '
+      . /usr/local/lib/provision.sh
+      configure_keycloak_next
+      configure_keycloak_bureau
+      configure_keycloak_ldap
+      configure_keycloak_rocketchat
+      configure_keycloak_redmine
+      '
+
   bureau:
     image: entint/bureau
+    build:
+      # TODO the same as below
+      context: ../../bureau
     depends_on:
       - rocketchat
       - phpldapadmin
@@ -296,6 +382,9 @@ services:
       - ./data/bureau/env:/app/.env:Z
       - ./data/bureau/ldap.ini:/app/ldap.ini:Z
       - ./data/bureau/settings.json:/app/saml/settings.json:Z
+      # TODO bureau should be submodule of intranet or vice versa.
+      # ../../bureau/bureau breaks when the repo is in unexpected folder.
+      - ../../bureau/bureau:/app/bureau:Z
     security_opt:
       - "seccomp=unconfined"
     healthcheck:
@@ -309,14 +398,31 @@ services:
       - next-backend
       - rocket-backend
 
+  redmine-gen-samlconf:
+    build:
+      context: build/gen-conf
+    volumes:
+      - ./provision.sh:/usr/local/lib/provision.sh
+      - ./data/redmine/config:/redmine-saml-config
+    entrypoint: >
+      bash -c '
+      . /usr/local/lib/provision.sh
+      configure_redmine_saml > /redmine-saml-config/saml.rb
+      '
 
   redmine:
     image: entint/redmine
     build:
       context: build/redmine
+    entrypoint: ["/usr/local/bin/redmine-entrypoint.sh"]
+    command: ["rails", "server", "-b", "0.0.0.0"]
     depends_on:
-      - openldap
-      - db-redmine
+      ldap-config-acl:
+        condition: service_completed_successfully
+      redmine-gen-samlconf:
+        condition: service_completed_successfully
+      db-redmine:
+        condition: service_healthy
     environment:
       - REDMINE_DB_POSTGRES=db
       - REDMINE_DB_USERNAME=$REDMINE_POSTGRES_USER
@@ -326,9 +432,17 @@ services:
       - SECRET_KEY_BASE=$REDMINE_SECRET
     volumes:
       - ./data/redmine/files:/usr/src/redmine/files:Z
-      - ./data/redmine/saml.rb:/usr/src/redmine/config/initializers/saml.rb:Z
+      - ./data/redmine/config/saml.rb:/usr/src/redmine/config/initializers/saml.rb:Z
+      - ./redmine-entrypoint.sh:/usr/local/bin/redmine-entrypoint.sh
     security_opt:
       - "seccomp=unconfined"
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail http://localhost:3000/ || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
     networks:
       - redmine-backend
       - ldap-backend

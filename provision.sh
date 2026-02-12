@@ -24,6 +24,7 @@ SMTP_HOSTNAME=smtp.$MAIL_HOST
 LOCAL_SETUP="${LOCAL_SETUP:-no}"
 
 KCADM_PATH=/opt/keycloak/bin/kcadm.sh
+KCADM_SERVER="keycloak:1184"
 # yes if we are testing things locally, i.e. without a real domain
 if test "$DOMAINNAME" = localhost; then
 	LOCAL_SETUP=yes
@@ -431,22 +432,16 @@ function bureau_exec_flask {
 
 
 # Useful for indirect configuration using bash and env vars
-function keycloak_exec {
-	docker-compose exec keycloak "$@"
+function run_kcadm {
+	"$KCADM_PATH" --server "$KCADM_SERVER" "$@"
 }
-
-
-function keycloak_exec_kcadm {
-	keycloak_exec "$KCADM_PATH" "$@"
-}
-
 
 # $1: Client name
 # $2: Client ID
 # Prints the internal client ID
 function keycloak_exec_kcadm_new_saml_client {
 	local _id=$2 _name=$1
-	keycloak_exec_kcadm create clients -r master -s "clientId=$_id" -s protocol=saml -s enabled=true -s "name=$_name" -s 'defaultClientScopes=[ ]'
+	run_kcadm create clients -r master -s "clientId=$_id" -s protocol=saml -s enabled=true -s "name=$_name" -s 'defaultClientScopes=[ ]'
 	internal_client_id=$(_keycloak_client_id "$_id")
 	printf '%s' "$internal_client_id"
 }
@@ -458,7 +453,7 @@ function keycloak_add_mappers_to_client {
 	local _id="$1"
 	shift
 	for stuff in "$@"; do
-		keycloak_exec_kcadm create "clients/$_id/protocol-mappers/models" \
+		run_kcadm create "clients/$_id/protocol-mappers/models" \
 			-s name="$stuff" \
 			-s protocol=saml \
 			-s protocolMapper=saml-user-attribute-mapper \
@@ -474,8 +469,8 @@ function keycloak_add_mappers_to_client {
 # $1: Client Name
 function _keycloak_list_mappers {
 	_keycloak_login
-	internal_client_id=$(keycloak_exec_kcadm get clients | jq -M --raw-output ".[] | select(.name == \"$1\").id")
-	keycloak_exec_kcadm get "clients/$internal_client_id/protocol-mappers/models"
+	internal_client_id=$(run_kcadm get clients | jq -M --raw-output ".[] | select(.name == \"$1\").id")
+	run_kcadm get "clients/$internal_client_id/protocol-mappers/models"
 }
 
 
@@ -579,7 +574,7 @@ function configure_nextcloud_saml_certs {
 
 
 function _keycloak_login {
-	keycloak_exec_kcadm config credentials --server http://localhost:8080 --realm master --user "$ADMIN_USER" --password "$ADMIN_PASSWORD" &> /dev/null
+	run_kcadm config credentials --server http://localhost:8080 --realm master --user "$ADMIN_USER" --password "$ADMIN_PASSWORD" &> /dev/null
 }
 
 
@@ -592,13 +587,13 @@ function keycloak_update_client {
 	for arg in "$@"; do
 		_args+=(-s "$arg")
 	done
-	keycloak_exec_kcadm update "clients/$_client_id" --realm master "${_args[@]}"
+	run_kcadm update "clients/$_client_id" --realm master "${_args[@]}"
 }
 
 
 # $1: Literal Client ID URL
 function _keycloak_client_id {
-	printf "%s" "$(keycloak_exec_kcadm get clients --realm master --server http://localhost:8080 -q "clientId=$1" -F id | jq -M --raw-output '.[0].id')"
+	printf "%s" "$(run_kcadm get clients --realm master --server http://localhost:8080 -q "clientId=$1" -F id | jq -M --raw-output '.[0].id')"
 }
 
 
@@ -652,26 +647,26 @@ function _keycloak_update_ldap_component {
 	local value
 	for key in "${!KEYCLOAK_LDAP_CONFIGURATION[@]}"; do
 		value="${KEYCLOAK_LDAP_CONFIGURATION[$key]}"
-		keycloak_exec_kcadm update "components/$1" -s "config.$key=[$value]"
+		run_kcadm update "components/$1" -s "config.$key=[$value]"
 	done
 }
 
 
 function configure_keycloak_ldap {
 	_keycloak_login
-	local ldap_federation_exists=$(keycloak_exec_kcadm get components -r master | jq -r '.[] | select(.providerType=="org.keycloak.storage.UserStorageProvider") | select(.providerId=="ldap") | length > 0')
+	local ldap_federation_exists=$(run_kcadm get components -r master | jq -r '.[] | select(.providerType=="org.keycloak.storage.UserStorageProvider") | select(.providerId=="ldap") | length > 0')
 	if test "$ldap_federation_exists" != true; then
-		keycloak_exec_kcadm create components -r master -s name="ldap" -s providerId=ldap -s providerType=org.keycloak.storage.UserStorageProvider -s 'config.enabled=["true"]' -s 'config.editMode=["READ_ONLY"]'
+		run_kcadm create components -r master -s name="ldap" -s providerId=ldap -s providerType=org.keycloak.storage.UserStorageProvider -s 'config.enabled=["true"]' -s 'config.editMode=["READ_ONLY"]'
 	fi
-	internal_component_id=$(keycloak_exec_kcadm get components -r master | jq -r '.[] | select(.providerType=="org.keycloak.storage.UserStorageProvider") | select(.providerId=="ldap").id')
+	internal_component_id=$(run_kcadm get components -r master | jq -r '.[] | select(.providerType=="org.keycloak.storage.UserStorageProvider") | select(.providerId=="ldap").id')
 	_keycloak_update_ldap_component "$internal_component_id"
-	keycloak_exec bash -c "$KCADM_PATH update components/$internal_component_id -s config.bindCredential=[\\\"\$LDAP_READER_PASSWORD\\\"]"
+	run_kcadm "$KCADM_PATH" update "components/$internal_component_id" -s "config.bindCredential=[\\\"\$LDAP_READER_PASSWORD\\\"]"
 }
 
 
 function get_idp_cert {
 	# keycloak_realm_cert=$(keycloak_exec_kcadm get realms/master/keys -F 'keys(certificate)' | jq -M --raw-output 'flatten|add.certificate')
-	keycloak_realm_cert=$(keycloak_exec_kcadm get realms/master/keys | jq -M --raw-output '.keys[] | select(.use == "SIG") | select(.type == "RSA").certificate')
+	keycloak_realm_cert=$(run_kcadm get realms/master/keys | jq -M --raw-output '.keys[] | select(.use == "SIG") | select(.type == "RSA").certificate')
 	inline_idp_cert="-----BEGIN CERTIFICATE-----\n${keycloak_realm_cert}\n-----END CERTIFICATE-----\n"
 	printf -- "$inline_idp_cert"
 }
@@ -782,9 +777,8 @@ function prune_mongo_db {
 }
 
 
-# $1: Ldif as string
 function ldap_modify {
-	docker-compose exec -T openldap ldapmodify -Q -Y EXTERNAL -H ldapi:///
+        ldapmodify -H ldap://openldap:389 -w "$ADMIN_PASSWORD" -D "$ADMIN_DN"
 }
 
 
