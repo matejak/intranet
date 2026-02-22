@@ -259,9 +259,9 @@ services:
       resources:
         limits:
           cpus: '2.60'
-          memory: 1650M
+          memory: 2450M
         reservations:
-          memory: 1550M
+          memory: 2150M
     healthcheck:
       test: ["CMD-SHELL", "curl --head -fsS http://localhost:9000/health/ready"]
       interval: 10s
