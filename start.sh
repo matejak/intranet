@@ -11,19 +11,19 @@ docker-compose up -d openldap
 docker-compose up -d mongo-rocket
 docker-compose up -d db-next db-keycloak db-redmine
 
-docker wait --condition healthy intranet-mongo-rocket-1
+docker-compose up -d --wait mongo-rocket
 
 configure_mongo
 
 docker-compose up -d next
 
-docker wait --condition healthy intranet-db-keycloak-1
+docker-compose up -d --wait db-keycloak
 
 docker-compose up -d keycloak
 
 configure_ldap_acl
 
-docker wait --condition healthy intranet-next-1
+docker-compose up -d --wait next
 
 configure_nextcloud
 configure_nextcloud_ldap
@@ -33,7 +33,7 @@ docker-compose up -d rocketchat
 configure_bureau_saml_except_certs
 docker-compose up -d bureau
 
-docker wait --condition healthy intranet-keycloak-1
+docker-compose up -d --wait keycloak
 
 configure_keycloak_next
 configure_keycloak_bureau
