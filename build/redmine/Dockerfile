@@ -9,3 +9,5 @@ RUN true \
         && true
 
 RUN bundle install
+RUN mkdir -p /home/redmine/.bundle \
+    && chown -R redmine:redmine /home/redmine
