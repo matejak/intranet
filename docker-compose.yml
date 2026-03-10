@@ -26,7 +26,7 @@ services:
           - db
 
   # Needs to install apps
-  # docker-compose exec -u www-data next ./occ app:install groupfolders
+  # docker compose exec -u www-data next ./occ app:install groupfolders
   # Also requires enabling access to nginx user
   # and also specifying the directory as good for the server to look inside
   # semanage fcontext -a -t httpd_sys_content_t "/srv/static/next(/.*)?"

@@ -1,7 +1,7 @@
 # intranet
 The True Enterprisey Intranet Setup
 
-This project contains support scripts that assist in deployment of an intranet setup based on docker-compose and podman.
+This project contains support scripts that assist in deployment of an intranet setup based on docker compose and podman.
 Namely:
 
 - Installation and enablement of Nextcloud apps.
@@ -26,6 +26,6 @@ Namely:
 
 ## How to use
 
-Create a file .env based on .env.example, so the docker-compose can populate variables from it.
+Create a file .env based on .env.example, so the docker compose can populate variables from it.
 You may have to define a bunch of DB-app passwords in there.
 The admin password can be also changed, but you will have to repeat the change in the `start.sh` file too, as both containers and provisioning scripts need to know it.
