@@ -446,7 +446,7 @@ function keycloak_exec_kcadm {
 # Prints the internal client ID
 function keycloak_exec_kcadm_new_saml_client {
 	local _id=$2 _name=$1
-	keycloak_exec_kcadm create clients -r master -s "clientId=$_id" -s protocol=saml -s enabled=true -s "name=$_name" -s 'defaultClientScopes=[ ]'
+	keycloak_exec_kcadm create clients -r master -s "clientId=$_id" -s protocol=saml -s enabled=true -s "name=$_name" -s 'defaultClientScopes=[ ]' > /dev/null
 	internal_client_id=$(_keycloak_client_id "$_id")
 	printf '%s' "$internal_client_id"
 }
