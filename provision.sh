@@ -53,7 +53,7 @@ KEYCLOAK_SAML_ROOT=$KEYCLOAK_MASTER_ROOT/protocol/saml
 # Helper function, useful for connecting to postgres DBs right away
 # $1: db host stem
 function db_admin {
-	docker-compose exec "db-$1" bash -c 'psql -U "$POSTGRES_USER" "$POSTGRES_DB"'
+	docker compose exec "db-$1" bash -c 'psql -U "$POSTGRES_USER" "$POSTGRES_DB"'
 }
 
 
@@ -78,8 +78,8 @@ function ldap_query {
 	filter="$1"
 	output_field="$2"
 	test -n "$3" && search_base_restriction="$3,"
-	docker-compose exec openldap ldapsearch -b "${search_base_restriction}$LDAP_BASE_DN" -x -w "$ADMIN_PASSWORD" -D "$ADMIN_DN" "$filter" "$output_field"
-	# docker-compose exec openldap bash -c "ldapsearch -b \"${search_base_restriction}\$LDAP_BASE_DN\" -x -w \"\$LDAP_ADMIN_PASSWORD\" -D \"cn=admin,\$LDAP_BASE_DN\" \"$filter\" \"$output_field\""
+	docker compose exec openldap ldapsearch -b "${search_base_restriction}$LDAP_BASE_DN" -x -w "$ADMIN_PASSWORD" -D "$ADMIN_DN" "$filter" "$output_field"
+	# docker compose exec openldap bash -c "ldapsearch -b \"${search_base_restriction}\$LDAP_BASE_DN\" -x -w \"\$LDAP_ADMIN_PASSWORD\" -D \"cn=admin,\$LDAP_BASE_DN\" \"$filter\" \"$output_field\""
 }
 
 
@@ -97,7 +97,7 @@ function ldap_extract {
 # $3: what to query
 # We use bash statement to let the container do the env var substitution
 function ldap_query_ou {
-	docker-compose exec openldap bash -c "ldapsearch -b \"ou=$1,\$LDAP_BASE_DN\" -x -w \"\$LDAP_ADMIN_PASSWORD\" -D \"$ADMIN_DN\" \"(cn=$2)\" \"$3\""
+	docker compose exec openldap bash -c "ldapsearch -b \"ou=$1,\$LDAP_BASE_DN\" -x -w \"\$LDAP_ADMIN_PASSWORD\" -D \"$ADMIN_DN\" \"(cn=$2)\" \"$3\""
 }
 
 
@@ -116,7 +116,7 @@ function change_mail_domain {
 # $2: old in days, default 90
 function search_for_old_trashed_mails {
 	local old=${2:-90}
-	docker-compose exec mail doveadm search -u "$1"  mailbox Trash savedbefore "${old}d"
+	docker compose exec mail doveadm search -u "$1"  mailbox Trash savedbefore "${old}d"
 }
 
 
@@ -124,13 +124,13 @@ function search_for_old_trashed_mails {
 # $2: old in days, default 90
 function delete_old_trashed_mails {
 	local old=${2:-90}
-	docker-compose exec mail doveadm expunge -u "$1" mailbox Trash savedbefore "${old}d"
+	docker compose exec mail doveadm expunge -u "$1" mailbox Trash savedbefore "${old}d"
 }
 
 
 # $1: Arguments to doveadm as one single string
 function doveadm_exec {
-	docker-compose exec mail bash -c "doveadm $1"
+	docker compose exec mail bash -c "doveadm $1"
 }
 
 
@@ -224,7 +224,7 @@ function settle_fs_ownership {
 	for pair in "${!FS_OWNERSHIP[@]}"; do
 		name=$(cut -f 1 -d , <<< $pair)
 		dir=$(cut -f 2 -d , <<< $pair)
-		docker-compose exec -u root $name chown -R ${FS_OWNERSHIP[$pair]} $dir
+		docker compose exec -u root $name chown -R ${FS_OWNERSHIP[$pair]} $dir
 	done
 }
 
@@ -407,7 +407,7 @@ MONGO_ACCOUNTS[RegistrationForm]='"Disabled"'
 
 
 function nextcloud_exec {
-	docker-compose exec --user www-data "$NEXTCLOUD_HOSTNAME" "$@"
+	docker compose exec --user www-data "$NEXTCLOUD_HOSTNAME" "$@"
 }
 
 
@@ -426,13 +426,13 @@ function nextcloud_exec_occ_set_ldap_indirect {
 
 
 function bureau_exec_flask {
-	docker-compose exec bureau flask "$@"
+	docker compose exec bureau flask "$@"
 }
 
 
 # Useful for indirect configuration using bash and env vars
 function keycloak_exec {
-	docker-compose exec keycloak "$@"
+	docker compose exec keycloak "$@"
 }
 
 
@@ -688,7 +688,7 @@ function generate_rsa_certs {
 
 
 function mongo_rocket_eval {
-	docker-compose exec mongo-rocket mongosh 'db/rocketchat' --eval "$1"
+	docker compose exec mongo-rocket mongosh 'db/rocketchat' --eval "$1"
 }
 
 
@@ -759,8 +759,8 @@ function backup_postgres_db {
 	name=$1
 	backupdir=$2
 	# POSTGRES_USER is known only *inside* of the container
-	# docker-compose exec $name bash -c 'pg_dumpall -c -U $POSTGRES_USER' > $backupdir/dump_${name}_`date +%Y-%m-%d"_"%H_%M_%S`.sql
-	docker-compose exec $name bash -c 'pg_dumpall -c -U $POSTGRES_USER' > $backupdir/dump_${name}.sql
+	# docker compose exec $name bash -c 'pg_dumpall -c -U $POSTGRES_USER' > $backupdir/dump_${name}_`date +%Y-%m-%d"_"%H_%M_%S`.sql
+	docker compose exec $name bash -c 'pg_dumpall -c -U $POSTGRES_USER' > $backupdir/dump_${name}.sql
 }
 
 
@@ -770,7 +770,7 @@ function backup_mongo_db {
 	local name backupdir
 	name=$1
 	backupdir=$2
-	docker-compose exec $name mongodump --archive > $backupdir/dump_${name}.archive
+	docker compose exec $name mongodump --archive > $backupdir/dump_${name}.archive
 }
 
 
@@ -784,7 +784,7 @@ function prune_mongo_db {
 
 # $1: Ldif as string
 function ldap_modify {
-	docker-compose exec -T openldap ldapmodify -Q -Y EXTERNAL -H ldapi:///
+	docker compose exec -T openldap ldapmodify -Q -Y EXTERNAL -H ldapi:///
 }
 
 
