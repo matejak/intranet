@@ -293,7 +293,7 @@ services:
 
       - SAML_PATH=/app/saml
     volumes:
-      - ./data/bureau/env:/app/.env:Z
+      - ./data/bureau/env:/app/bureau/.env:Z
       - ./data/bureau/ldap.ini:/app/ldap.ini:Z
       - ./data/bureau/settings.json:/app/saml/settings.json:Z
     security_opt:
