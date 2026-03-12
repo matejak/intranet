@@ -17,15 +17,23 @@ Namely:
 ## Project structure
 
 - Root folder:
-  - `start.sh`: Start respective containers.
-  - `provision.sh`: Define Bash functions that set those containers up.
-  - `cleanup_data.sh`: Discard those containers.
+  - `start.sh`: Starts respective containers.
+  - `provision.sh`: Defines Bash functions that set those containers up.
+  - `cleanup_data.sh`: Removes those containers and deletes content of their bind mounts.
 - `build` folder: Contains data needed for building of some of the container images.
 - `data` folder: Contains persistent data used by the respective containers. Actual data are not part of the repository.
 
 
 ## How to use
 
-Create a file .env based on .env.example, so the docker compose can populate variables from it.
+Create a file `.env` based on `.env.example`, so Docker Compose can populate variables from it.
 You may have to define a bunch of DB-app passwords in there.
 The admin password can be also changed, but you will have to repeat the change in the `start.sh` file too, as both containers and provisioning scripts need to know it.
+
+Create a file `data/bureau/env` based on `data/bureau/env.example` and assign a string to the variable `SECRET_KEY`.
+
+Typical usage:
+```
+bash ./cleanup_data.sh
+bash ./start.sh
+```
