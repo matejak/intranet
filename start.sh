@@ -7,6 +7,11 @@ export ADMIN_PASSWORD=none
 
 set -x
 
+jq --version > /dev/null || { echo "You need the jq utility"; exit 1; }
+test -f data/bureau/env || { echo "You need to create the data/bureau/env file by copying and modifying the env.example"; exit 1; }
+grep -q "^ADMIN_PASSWORD=$ADMIN_PASSWORD\$" .env || { echo "Inconsistent admin password between the .env file and the start environment"; exit 1; }
+grep -q "^DOMAINNAME=$DOMAINNAME\$" .env || { echo "Inconsistent domain name between the .env file and the start environment"; exit 1; }
+
 docker compose up -d openldap
 docker compose up -d mongo-rocket
 docker compose up -d db-next db-keycloak db-redmine
