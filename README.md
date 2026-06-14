@@ -23,50 +23,58 @@ Namely:
   - `provision.sh`: Defines Bash functions that set up and possibly maintain those containers.
   - `cleanup_data.sh`: Removes the containers and deletes the contents of their bind mounts.
     After running it, you are supposed to have a clean slate.
-- `build` folder: Contains data needed to build some of the container images.
-- `data` folder: Contains persistent data used by the respective containers. The actual data is not part of the repository.
+- `build` folder: Contains files used to build the customized container images.
+- `data` folder: Subfolders contains persistent data for containers. It is a mix of
+  - immutable files that are part of the repository, and
+  - private, ever-chaning container data. 
 
 
 ## Services
 
+To see how the services are proxied once the system starts, consult config files in the [server config directory](data/gateway/conf.d).
+
+| Service name | Port |
+| --- | --- |
+| Nextcloud | [1181](http://localhost:1181) |
+| Rocket.Chat | [1182](http://localhost:1182) |
+| phpLDAPadmin | [1183](http://localhost:1183) |
+| Keycloak | [1184](http://localhost:1184) |
+| Bureau | [1185](http://localhost:1185) |
+| Redmine | [1186](http://localhost:1186) |
+
+
 ### Nextcloud
 
-Available as http://localhost:1181
 The configured instance connects to LDAP, and comes with useful apps.
 SAML integration is prepared but won't work over HTTP, as Nextcloud enforces HTTPS via its security settings.
 
 
 ### Rocket.Chat
 
-Available as http://localhost:1182
 Unlike other services, it doesn't recognize `admin` user, but uses the `$ROCKET_ADMIN_USERNAME`, typically `admin-rocket`.
 Integrated with LDAP and configured for SAML login.
 
 
 ### phpLDAPadmin
 
-Available as http://localhost:1183
 Login is typically `cn=admin,dc=localhost` and the admin password.
 Mostly useful to ad-hoc edits and inspection.
 
 
 ### Keycloak
 
-Available as http://localhost:1184
 SSO server, connects to LDAP, and mainly uses SAML to provide SSO to the other various services.
 
 
 ### Bureau
 
-Available as http://localhost:1185
 An admin app that aims to integrate various services, and use their respective REST APIs to ensure their mutual consistency.
-You can use it to create a user (hopefully with admin privileges) using its CLI.
-Then, you should be able to log in using SAML.
+You can use its CLI to create new users, including those with admin privileges.
+The web interface requires SAML login, which is only possible if you know credentials of an already existing user.
 
 
 ### Redmine
 
-Available as http://localhost:1186
 Integrated with SAML and LDAP.
 SAML login works only for existing users. New users can be created by logging in via LDAP.
 
