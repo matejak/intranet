@@ -51,7 +51,6 @@ SAML integration is prepared but won't work over HTTP, as Nextcloud enforces HTT
 
 ### Rocket.Chat
 
-Unlike other services, it doesn't recognize `admin` user, but uses the `$ROCKET_ADMIN_USERNAME`, typically `admin-rocket`.
 Integrated with LDAP and configured for SAML login.
 
 

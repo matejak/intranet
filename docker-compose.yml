@@ -128,7 +128,7 @@ services:
           - db
 
   rocketchat:
-    image: rocket.chat:6.0
+    image: rocket.chat:6.13.1
     volumes:
       - ./data/rocket/uploads:/app/bundle/programs/server/uploads/:Z
     environment:
@@ -138,7 +138,7 @@ services:
 
       - PORT=3000
 
-      - ADMIN_USERNAME=$ROCKET_ADMIN_USERNAME
+      - ADMIN_USERNAME=$ADMIN_USERNAME
       - ADMIN_PASS=$ADMIN_PASSWORD
       - Accounts_UseDNSDomainCheck=false
       - OVERWRITE_SETTING_Show_Setup_Wizard=completed
@@ -283,7 +283,7 @@ services:
 
       - ROCKETCHAT_HOST=http://rocketchat:3000
       - ROCKETCHAT_PASSWORD=$ADMIN_PASSWORD
-      - ROCKETCHAT_USER=$ROCKET_ADMIN_USERNAME
+      - ROCKETCHAT_USER=$ADMIN_USERNAME
 
       - EDAP_HOSTNAME=ldap:389
       - EDAP_PASSWORD=$ADMIN_PASSWORD
