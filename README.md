@@ -24,14 +24,14 @@ Namely:
   - `cleanup_data.sh`: Removes the containers and deletes the contents of their bind mounts.
     After running it, you are supposed to have a clean slate.
 - `build` folder: Contains files used to build the customized container images.
-- `data` folder: Subfolders contains persistent data for containers. It is a mix of
+- `data` folder: Subfolders contain persistent data for containers. It is a mix of
   - immutable files that are part of the repository, and
-  - private, ever-chaning container data. 
+  - private, ever-changing container data. 
 
 
 ## Services
 
-To see how the services are proxied once the system starts, consult config files in the [server config directory](data/gateway/conf.d).
+Service proxying is configured in [data/gateway/conf.d](data/gateway/conf.d).
 
 | Service name | Port |
 | --- | --- |
@@ -107,5 +107,5 @@ SAML login works only for existing users. New users can be created by logging in
    bash ./start.sh
    ```
 1. Wait until everything comes up.
-1. Create a user with administrator privileges using `bureau`, as instructed.
+1. Create a user with administrator privileges using `bureau`, following the instructions shown at the end of the `start.sh` log.
 1. Access the services on localhost, as described above.
