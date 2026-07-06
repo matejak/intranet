@@ -1,0 +1,14 @@
+# Enable SAML authentication
+saml_enabled: 1
+
+# Label of the SSO button (empty = default)
+saml_login_label: ''
+
+# Automatically create Redmine users on first SAML login
+onthefly_creation: 1
+
+# replace_redmine_login makes Keycloak the default and only visible
+# authentication method (hiding the "SSO login" button). With OmniAuth 2.x,
+# setting it to 1 fails because it uses GET instead of the POST required
+# to initiate SAML authentication.
+replace_redmine_login: 0
