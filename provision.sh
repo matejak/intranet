@@ -940,7 +940,10 @@ RedmineSaml::Base.configure do |config|
     # Alternatively, specify the full certifiate
     # NOTE: only use idp_cert OR idp_cert_fingerprint (not both!)
     idp_cert: '$inline_idp_cert',
-    name_identifier_format: 'urn:oasis:names:tc:SAML:2.0:nameid-format:username',
+    # SAML 2.0 does not define a separate NameID namespace;
+    # it reuses NameID format URIs originally defined in SAML 1.1.
+    # "unspecified" is a standard and widely supported format for opaque user identifiers.
+    name_identifier_format: 'urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified',
     # Optional signout URL, not supported by all identity providers
     idp_slo_service_url: '$KEYCLOAK_SAML_ROOT',
     # Which redmine field is used as name_identifier_value for SAML logout

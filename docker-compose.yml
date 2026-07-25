@@ -327,6 +327,7 @@ services:
     volumes:
       - ./data/redmine/files:/usr/src/redmine/files:Z
       - ./data/redmine/saml.rb:/usr/src/redmine/config/initializers/saml.rb:Z
+      - ./config/redmine_saml/settings.yml:/usr/src/redmine/plugins/redmine_saml/config/settings.yml:Z
     security_opt:
       - "seccomp=unconfined"
     networks:
