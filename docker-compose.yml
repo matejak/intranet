@@ -66,6 +66,7 @@ services:
       retries: 5
     networks:
       - next-backend
+      - next-frontend
       - ldap-backend
 
   gateway:
@@ -81,7 +82,6 @@ services:
       - ./data/next/data/html:/srv/static/next:ro,z
       - ./data/gateway/conf.d:/etc/nginx/conf.d:ro,Z
     depends_on:
-      - bureau
       - keycloak
       - next
       - phpldapadmin
@@ -95,10 +95,10 @@ services:
         reservations:
           memory: 50M
     networks:
-      - next-backend
-      - ldap-backend
-      - rocket-backend
-      - keycloak-backend
+      - next-frontend
+      - ldap-frontend
+      - rocket-frontend
+      - keycloak-frontend
 
   mongo-rocket:
     image: mongo:6.0
@@ -156,6 +156,7 @@ services:
     networks:
       - ldap-backend
       - rocket-backend
+      - rocket-frontend
     labels:
       - "traefik.backend=rocket"
       - "traefik.frontend.rule=Host: rocket.$DOMAINNAME"
@@ -163,6 +164,7 @@ services:
 
   openldap:
     image: osixia/openldap
+    # image: bitnami/openldap
     # command: "--loglevel debug"
     # command: --copy-service
     ports:
@@ -172,8 +174,10 @@ services:
       LDAP_ORGANISATION: "The Enterprisey Intranet"
       LDAP_DOMAIN: "$DOMAINNAME"
       LDAP_BASE_DN: "$LDAP_BASE_DN"
+      LDAP_ROOT: "$LDAP_BASE_DN"
+      LDAP_ADMIN_DN: "cn=admin,$LDAP_BASE_DN"
       LDAP_ADMIN_PASSWORD: "$ADMIN_PASSWORD"
-      LDAP_LOG_LEVEL: "256"
+
     volumes:
       - ./data/ldap/data:/var/lib/ldap:Z
       - ./data/ldap/slapd.d:/etc/ldap/slapd.d:Z
@@ -190,21 +194,32 @@ services:
           - ldap
 
   phpldapadmin:
-    image: osixia/phpldapadmin
+    image: phpldapadmin/phpldapadmin
     environment:
       PHPLDAPADMIN_LDAP_HOSTS: "openldap"
-      PHPLDAPADMIN_HTTPS=false:
+      LDAP_HOST: "openldap"
+      PHPLDAPADMIN_HTTPS: "false"
+      # LDAP_BASE_DN: "dc=localhost"
+      # LDAP_LOGIN_ATTR: "dn"
+      # LDAP_LOGIN_ATTR_DESC: "DN"
+      LDAP_USERNAME: "$LDAP_READER_DN"
+      LDAP_PASSWORD: "$LDAP_READER_PASSWORD"
+      # LDAP_USERNAME: "cn=admin,$LDAP_BASE_DN"
+      # LDAP_PASSWORD: "$ADMIN_PASSWORD"
+      LDAP_ALLOW_GUEST: "true"
+      LOG_LEVEL: "debug"
     depends_on:
       - openldap
     deploy:
       resources:
         limits:
           cpus: '0.10'
-          memory: 80M
+          memory: 120M
         reservations:
-          memory: 50M
+          memory: 90M
     networks:
       - ldap-backend
+      - ldap-frontend
 
   db-keycloak:
     image: postgres:$POSTGRES_MAJOR-alpine
@@ -270,12 +285,14 @@ services:
     networks:
       - ldap-backend
       - keycloak-backend
+      - keycloak-frontend
 
-  bureau:
-    image: entint/bureau
+  bureau-dev:
+    image: localhost/opencode-bureau
     depends_on:
       - rocketchat
       - phpldapadmin
+      - redmine
     environment:
       - NEXTCLOUD_PASSWORD=$ADMIN_PASSWORD
       - NEXTCLOUD_HOST=http://gateway:1181
@@ -285,29 +302,27 @@ services:
       - ROCKETCHAT_PASSWORD=$ADMIN_PASSWORD
       - ROCKETCHAT_USER=$ROCKET_ADMIN_USERNAME
 
-      - EDAP_HOSTNAME=ldap:389
-      - EDAP_PASSWORD=$ADMIN_PASSWORD
-      - EDAP_DOMAIN=$DOMAINNAME
+      - LDAP_HOSTNAME=ldap:389
+      - LDAP_PASSWORD=$ADMIN_PASSWORD
+      - LDAP_DOMAIN=$DOMAINNAME
       - LDAP_READER_PASSWORD=$LDAP_READER_PASSWORD
-      - EDAP_USER=cn=admin
+      - LDAP_USER=cn=admin
 
-      - SAML_PATH=/app/saml
+      - REDMINE_HOSTNAME=http://gateway:1186
+
+      - BUREAU_DB_HOST=db
+      - BUREAU_DB_USERNAME=$BUREAU_POSTGRES_USER
+      - BUREAU_DB_PASSWORD=$BUREAU_POSTGRES_PASSWORD
+      - BUREAU_DB_DATABASE=$BUREAU_POSTGRES_DB
+
+      - TOGETHER_API_KEY=496970c0a9e2a4ffafcd2a9052dacecd1cdc49e4aa5cc1946da3b7eae8a2b5dc
     volumes:
-      - ./data/bureau/env:/app/.env:Z
-      - ./data/bureau/ldap.ini:/app/ldap.ini:Z
-      - ./data/bureau/settings.json:/app/saml/settings.json:Z
+      - /home/matej/git/bureau:/work:Z
     security_opt:
       - "seccomp=unconfined"
-    healthcheck:
-      test: ["CMD-SHELL", "curl -s -o /dev/null http://localhost:8080 || exit 1"]
-      interval: 5s
-      timeout: 3s
-      retries: 5
     networks:
       - ldap-backend
-      - keycloak-backend
-      - next-backend
-      - rocket-backend
+      - rocket-frontend
 
 
   redmine:
@@ -332,6 +347,7 @@ services:
       - "seccomp=unconfined"
     networks:
       - redmine-backend
+      - redmine-frontend
       - ldap-backend
 
 
@@ -367,3 +383,8 @@ networks:
   rocket-backend:
   redmine-backend:
   ldap-backend:
+  keycloak-frontend:
+  next-frontend:
+  rocket-frontend:
+  redmine-frontend:
+  ldap-frontend:
