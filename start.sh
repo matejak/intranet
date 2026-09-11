@@ -30,18 +30,18 @@ configure_nextcloud_ldap
 
 docker compose up -d rocketchat
 
-configure_bureau_saml_except_certs
-docker compose up -d bureau
+# configure_bureau_saml_except_certs
+# docker compose up -d bureau
 
 docker compose up -d --wait keycloak
 
 configure_keycloak_next
-configure_keycloak_bureau
+# configure_keycloak_bureau
 configure_keycloak_ldap
 configure_keycloak_rocketchat
 configure_keycloak_redmine
 
-configure_bureau_saml_certs
+# configure_bureau_saml_certs
 
 configure_rocketchat_general
 configure_rocketchat_ldap
@@ -57,9 +57,9 @@ docker compose up -d redmine
 docker compose up -d gateway
 docker compose restart gateway
 
-bureau_exec_flask bootstrap
+# bureau_exec_flask bootstrap
 
-docker compose restart bureau
+# docker compose restart bureau
 
 docker compose restart gateway
 

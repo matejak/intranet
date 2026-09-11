@@ -962,5 +962,12 @@ RedmineSaml::Base.configure do |config|
   end
 end
 EOF
-	podman unshare mv "$_tmpfname" "$DATADIR/redmine/saml.rb"
+	if test -f "$DATADIR/redmine/saml.rb"; then
+		# We may not have rights to overwrite the file when the container took over it
+		cat "$_tmpfname" | docker compose exec --no-tty redmine sh -c 'cat > config/initializers/saml.rb'
+		rm "$_tmpfname"
+	else
+		# The container may not even exist, so at least the move should succeed
+		mv "$_tmpfname" "$DATADIR/redmine/saml.rb"
+	fi
 }
