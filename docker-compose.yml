@@ -79,7 +79,7 @@ services:
       - "1186:1186"
     volumes:
       - ./data/next/data/html:/srv/static/next:ro,z
-      - ./data/gateway/conf.d:/etc/nginx/conf.d:ro,Z
+      - ./config/gateway:/etc/nginx/conf.d:ro,Z
     depends_on:
       - bureau
       - keycloak
@@ -293,8 +293,8 @@ services:
 
       - SAML_PATH=/app/saml
     volumes:
-      - ./data/bureau/env:/app/.env:Z
-      - ./data/bureau/ldap.ini:/app/ldap.ini:Z
+      - ./config/bureau/env:/app/.env:Z
+      - ./config/bureau/ldap.ini:/app/ldap.ini:Z
       - ./data/bureau/settings.json:/app/saml/settings.json:Z
     security_opt:
       - "seccomp=unconfined"
