@@ -416,6 +416,11 @@ function nextcloud_exec_occ {
 }
 
 
+function redmine_exec_notty {
+	docker compose exec --no-tty redmine "$@"
+}
+
+
 # Useful for sensitive data, hardwiredfor nextcloud ldap stuff
 # $1: LDAP Config ID
 # $2: Configuration key
@@ -916,6 +921,38 @@ function configure_keycloak_redmine {
 }
 
 
+# Generate a random string usable as password
+# $1: Length
+function _generate_complex_string {
+	tr -dc 'A-Za-z0-9!?%=' < /dev/urandom | head -c "$1"
+}
+
+
+# Configure remine admin user and password
+# Redmine doesnt support the container initialization using env vars, so it has to be done explicitly
+# 'admin' is a hardcoded superuser, so either use it, or lock it away with strong unknown pw, and create another admin user.
+function configure_redmine_admin {
+	if test "$ADMIN_USER" == admin; then
+		redmine_exec_notty bundle exec rails runner "u=User.find_by(login: \"$ADMIN_USER\"); u.password=\"$ADMIN_PASSWORD\"; u.password_confirmation=\"$ADMIN_PASSWORD\"; u.must_change_passwd=false; u.save!(validate: false)"
+	else
+		redmine_exec_notty bundle exec rails runner "
+u = User.find_or_initialize_by(login: \"$ADMIN_USER\")
+
+u.firstname = \"$ADMIN_USER\"
+u.lastname = \"Admin\"
+u.mail = \"$ADMIN_USER@$DOMAINNAME\"
+u.password = \"$ADMIN_PASSWORD\"
+u.password_confirmation = \"$ADMIN_PASSWORD\"
+u.must_change_passwd = false
+u.admin = true
+
+u.save!(validate: false)"
+		local _complex_password=$(_generate_complex_string 20)
+		redmine_exec_notty bundle exec rails runner "u=User.find_by(login: \"admin\"); u.password=\"$_complex_password\"; u.password_confirmation=\"$_complex_password\"; u.save!()"
+	fi
+}
+
+
 function configure_redmine_saml {
 	_keycloak_login
 	inline_idp_cert="$(get_idp_cert)"
@@ -962,5 +999,12 @@ RedmineSaml::Base.configure do |config|
   end
 end
 EOF
-	podman unshare mv "$_tmpfname" "$DATADIR/redmine/saml.rb"
+	if test -f "$DATADIR/redmine/saml.rb"; then
+		# We may not have rights to overwrite the file when the container took over it
+		cat "$_tmpfname" | redmine_exec_notty sh -c 'cat > config/initializers/saml.rb'
+		rm "$_tmpfname"
+	else
+		# The container may not even exist, so at least the move should succeed
+		mv "$_tmpfname" "$DATADIR/redmine/saml.rb"
+	fi
 }

@@ -53,6 +53,7 @@ configure_nextcloud_saml_certs
 
 configure_redmine_saml
 docker compose up -d redmine
+configure_redmine_admin
 
 docker compose up -d gateway
 docker compose restart gateway
