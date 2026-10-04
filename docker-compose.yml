@@ -190,19 +190,23 @@ services:
           - ldap
 
   phpldapadmin:
-    image: osixia/phpldapadmin
+    image: phpldapadmin/phpldapadmin
     environment:
-      PHPLDAPADMIN_LDAP_HOSTS: "openldap"
-      PHPLDAPADMIN_HTTPS=false:
+      LDAP_HOST: "ldap"
+      PHPLDAPADMIN_HTTPS: "false"
+      LDAP_BASE_DN: "$LDAP_BASE_DN"
+      LDAP_USERNAME: "cn=admin,$LDAP_BASE_DN"
+      LDAP_PASSWORD: "$ADMIN_PASSWORD"
+      LDAP_ALLOW_GUEST: "true"
     depends_on:
       - openldap
     deploy:
       resources:
         limits:
           cpus: '0.10'
-          memory: 80M
+          memory: 130M
         reservations:
-          memory: 50M
+          memory: 100M
     networks:
       - ldap-backend
 
