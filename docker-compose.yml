@@ -78,9 +78,12 @@ services:
       - "1184:1184"
       - "1185:1185"
       - "1186:1186"
+    environment:
+      - NGINX_ENTRYPOINT_LOCAL_RESOLVERS=1
     volumes:
       - ./data/next/data/html:/srv/static/next:ro,z
-      - ./config/gateway:/etc/nginx/conf.d:ro,Z
+      - ./config/gateway/conf.d:/etc/nginx/conf.d:rw,Z  # <<< needs to be rw because of templates generating config files
+      - ./config/gateway/templates:/etc/nginx/templates:ro,Z
     depends_on:
       - bureau
       - keycloak

@@ -1,0 +1,2 @@
+resolver ${NGINX_LOCAL_RESOLVERS} valid=5s;
+resolver_timeout 2s;
